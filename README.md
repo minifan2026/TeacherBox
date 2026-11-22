@@ -18,11 +18,12 @@ TeacherBox/
 ├─ tools/              工具包目录，一个子目录 = 一个工具
 ├─ update.json         版本与更新源配置
 ├─ resources/          版本信息 + 应用程序清单（app.rc / app.manifest）
+├─ release/            已发布版本的更新包与清单（update.exe 从这里取新版）
 ├─ scripts/            WebView2 拉取、IID 生成、崩溃冒烟测试
 └─ logs/               运行日志（实际写在 %LOCALAPPDATA%\TeacherBox\logs）
 ```
 
-三个 exe 都嵌入了同一份版本信息与清单（`resources/app.rc`），在资源管理器里能看到「TeacherBox 教师工具箱 / 1.0.0.0」，清单声明 `asInvoker` + Per-Monitor V2 DPI。杀软（尤其 360）对「没有版本信息、无清单、还会拉起子进程」的裸 exe 判定很激进，带上这些信息能显著减少误报。
+三个 exe 都嵌入了同一份版本信息与清单（`resources/app.rc`），在资源管理器里能看到「TeacherBox 教师工具箱 / 1.1.0.0」，清单声明 `asInvoker` + Per-Monitor V2 DPI。杀软（尤其 360）对「没有版本信息、无清单、还会拉起子进程」的裸 exe 判定很激进，带上这些信息能显著减少误报。
 
 ## 启动链路
 
@@ -124,20 +125,34 @@ WebView2 官方头文件里的接口没有 `IID_XXX` 导出符号，MSVC 可以�
 
 ## 升级配置
 
-`update.json`：
+`update.json`（跟着 exe 走，本地配置）：
 
 ```json
 {
-  "version": "1.0.0",
-  "remote": "",
+  "version": "1.1.0",
+  "remote": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/release/update.json",
   "package": ""
 }
 ```
 
-- `remote`：远端 manifest 的 URL（返回 `{"version":"1.1.0","package":"https://.../tb-1.1.0.zip"}`）
-- `package`：本地更新包文件名（相对 exe 目录），用于离线分发/测试
+- `version`：当前安装的版本，用于和远端比较
+- `remote`：远端 manifest 的 URL（返回 `{"version":"1.1.0","package":"https://.../TeacherBox-1.1.0-win64.zip"}`）
+- `package`：本地更新包文件名（相对 exe 目录），用于离线分发/测试；`remote` 为空时只走它
 
-升级流程：拉取 manifest → 比较版本 → 下载 zip → `tar -xf` 解压到临时目录 → 逐个覆盖。正在运行的 `main.exe` 会先被改名成 `*.old` 再写入新文件，下次启动生效；`*.old` 在下次升级时清理。
+升级流程：拉取 manifest → 比较版本 → 下载 zip → 解压到临时目录 → 逐个覆盖。正在运行的 `main.exe` 会先被改名成 `*.old` 再写入新文件，下次启动生效；`*.old` 在下次升级时清理。
+
+远端地址如果是 `raw.githubusercontent.com`，拉取失败时会自动换成 `cdn.jsdelivr.net/gh/...` 再试一次，反之亦然——国内访问 raw 时好时坏，两个地址指向仓库里的同一份文件。
+
+### 发一个版本
+
+1. 改 `resources/app.rc` 里的 `FILEVERSION` / `PRODUCTVERSION`
+2. 改 `update.json` 的 `version`，然后 `.\build.ps1` 装配 `dist/`
+3. 打包：`Compress-Archive -Path "dist\*" -DestinationPath "release\TeacherBox-<版本>-win64.zip" -Force`
+4. 写 `release/update.json`，`package` 指向上一步那个 zip 的 raw 地址
+5. 提交推送，老的安装下次启动就会自己升上来
+
+包里的 `update.json` 必须是新版本号，否则每次启动都会重复下载同一个包。
+
 
 ## 日志与反馈
 
