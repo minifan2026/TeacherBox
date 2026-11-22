@@ -388,23 +388,33 @@ HICON MakeAppIcon(int size) {
 
   HGDIOBJ oldBmp = SelectObject(dc, color);
 
-  // 圆角渐变底
-  HBRUSH bg = CreateSolidBrush(RGB(37, 99, 235));
-  HBRUSH bg2 = CreateSolidBrush(RGB(29, 78, 216));
+  // 朱红底 + 米白衬线 T：和界面上那枚“印章”logo 一致
+  HBRUSH bg = CreateSolidBrush(RGB(171, 58, 44));
   HGDIOBJ oldBrush = SelectObject(dc, bg);
   HGDIOBJ oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
-  RoundRect(dc, 0, 0, size, size, (int)(size * 0.28f), (int)(size * 0.28f));
-  SelectObject(dc, bg2);
-  RoundRect(dc, 0, (int)(size * 0.55f), size, size, (int)(size * 0.28f), (int)(size * 0.28f));
+  RoundRect(dc, 0, 0, size, size, (int)(size * 0.16f), (int)(size * 0.16f));
+
+  // 内圈细边，像印章的边框（小图标不画，避免糊成一团）
+  if (size >= 24) {
+    HPEN innerPen = CreatePen(PS_SOLID, 1, RGB(253, 246, 232));
+    HGDIOBJ prevPen = SelectObject(dc, innerPen);
+    HGDIOBJ prevBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+    int inset = size / 14;
+    RoundRect(dc, inset, inset, size - inset, size - inset,
+              (int)(size * 0.08f), (int)(size * 0.08f));
+    SelectObject(dc, prevBrush);
+    SelectObject(dc, prevPen);
+    DeleteObject(innerPen);
+  }
 
   // 中间的 “T”
   SetBkMode(dc, TRANSPARENT);
-  SetTextColor(dc, RGB(255, 255, 255));
+  SetTextColor(dc, RGB(253, 246, 232));
   LOGFONTW lf{};
-  lf.lfHeight = -(int)(size * 0.62f);
-  lf.lfWeight = FW_BOLD;
+  lf.lfHeight = -(int)(size * 0.64f);
+  lf.lfWeight = FW_NORMAL;
   lf.lfQuality = ANTIALIASED_QUALITY;
-  wcscpy_s(lf.lfFaceName, L"Segoe UI");
+  wcscpy_s(lf.lfFaceName, L"Georgia");
   HFONT font = CreateFontIndirectW(&lf);
   HGDIOBJ oldFont = SelectObject(dc, font);
   RECT r{0, 0, size, size};
@@ -415,7 +425,6 @@ HICON MakeAppIcon(int size) {
   SelectObject(dc, oldPen);
   SelectObject(dc, oldBrush);
   DeleteObject(bg);
-  DeleteObject(bg2);
   SelectObject(dc, oldBmp);
 
   // 掩码位图：全不透明

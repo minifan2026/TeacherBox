@@ -67,7 +67,7 @@ add_executable(tb_gui WIN32
   resources/app.rc
 )
 target_include_directories(tb_gui PRIVATE "${TB_WEBVIEW2_INCLUDE}" src/gui "${CMAKE_SOURCE_DIR}/resources")
-target_link_libraries(tb_gui PRIVATE tb_common)
+target_link_libraries(tb_gui PRIVATE tb_common dwmapi)
 set_target_properties(tb_gui PROPERTIES OUTPUT_NAME "gui" WIN32_EXECUTABLE TRUE)
 
 # 所有产物统一输出到 build/bin，方便装配

@@ -17,6 +17,7 @@
   var elWarn = document.getElementById("warnings");
   var elLog = document.getElementById("log");
   var elCounter = document.getElementById("counter");
+  var elConsole = document.querySelector(".console");
   var elVersion = document.getElementById("version");
   var elSearch = document.getElementById("search");
   var elModal = document.getElementById("modal");
@@ -33,6 +34,7 @@
     var stamp = new Date().toLocaleTimeString("zh-CN", { hour12: false });
     var prefix = "[" + stamp + "] ";
     var line = prefix + text + "\n";
+    if (elConsole) elConsole.classList.remove("hidden");
     elLog.textContent += line;
     if (elLog.textContent.length > 120000) {
       elLog.textContent = elLog.textContent.slice(-90000);
@@ -141,38 +143,53 @@
     var card = document.createElement("div");
     card.className = "card";
 
-    var head = document.createElement("div");
-    head.className = "card-head";
-    var left = document.createElement("div");
-    var title = document.createElement("h3");
-    title.className = "card-title";
-    title.textContent = tool.name || tool.id;
-    var idEl = document.createElement("span");
+    // 左：编号（台账式，等宽体）
+    var idEl = document.createElement("div");
     idEl.className = "card-id";
     idEl.textContent = tool.id;
-    left.appendChild(title);
-    left.appendChild(idEl);
-    if (tool.version) {
-      var ver = document.createElement("span");
-      ver.className = "card-ver";
-      ver.textContent = "  v" + tool.version;
-      left.appendChild(ver);
-    }
+    idEl.title = tool.id;
+    card.appendChild(idEl);
 
+    // 中：标题行（名称 + 版本 + 状态）/ 描述
+    var main = document.createElement("div");
+    main.className = "card-main";
+
+    var line = document.createElement("div");
+    line.className = "card-line";
+
+    // 状态点放在名称前，纵向对齐成一条列
     var chip = document.createElement("span");
     var c = statusChip(tool.id);
     chip.className = "chip " + c.cls;
-    chip.textContent = c.text;
+    chip.title = c.text;
+    line.appendChild(chip);
 
-    head.appendChild(left);
-    head.appendChild(chip);
+    var title = document.createElement("h3");
+    title.className = "card-title";
+    title.textContent = tool.name || tool.id;
+    line.appendChild(title);
 
-    var desc = document.createElement("p");
-    desc.className = "card-desc";
-    desc.textContent = tool.description || "（该工具没有写描述）";
+    if (tool.version) {
+      var ver = document.createElement("span");
+      ver.className = "card-ver";
+      ver.textContent = "v" + tool.version;
+      line.appendChild(ver);
+    }
 
-    card.appendChild(head);
-    card.appendChild(desc);
+    main.appendChild(line);
+
+    if (tool.description) {
+      var desc = document.createElement("p");
+      desc.className = "card-desc";
+      desc.textContent = tool.description;
+      main.appendChild(desc);
+    }
+
+    card.appendChild(main);
+
+    // 右：操作
+    var side = document.createElement("div");
+    side.className = "card-side";
 
     var actions = document.createElement("div");
     actions.className = "card-actions";
@@ -181,7 +198,7 @@
 
     if (tool.hasCheck) {
       var bCheck = makeButton("检测", "ghost", function () {
-        log("检测 " + tool.id + " …");
+        log("检测 " + tool.id);
         send({ cmd: "check", id: tool.id });
       });
       bCheck.disabled = busy;
@@ -189,7 +206,7 @@
     }
     if (tool.hasInstall) {
       var bInstall = makeButton("安装", "primary", function () {
-        log("开始安装 " + tool.id + " …（可能需要几分钟）");
+        log("安装 " + tool.id);
         send({ cmd: "install", id: tool.id });
       });
       bInstall.disabled = busy;
@@ -201,13 +218,18 @@
       }));
     }
     (tool.actions || []).forEach(function (label, index) {
-      actions.appendChild(makeButton(label, "", function () {
+      actions.appendChild(makeButton(label, "ghost", function () {
         send({ cmd: "action", id: tool.id, index: index });
       }));
     });
 
-    card.appendChild(actions);
+    side.appendChild(actions);
+    card.appendChild(side);
     return card;
+  }
+
+  function pad2(n) {
+    return n < 10 ? "0" + n : String(n);
   }
 
   function render() {
@@ -219,7 +241,7 @@
 
     elGrid.textContent = "";
     visible.forEach(function (t) { elGrid.appendChild(renderCard(t)); });
-    elCounter.textContent = visible.length + " / " + state.tools.length + " 个工具";
+    elCounter.textContent = String(visible.length);
     elEmpty.classList.toggle("hidden", state.tools.length > 0);
   }
 
@@ -230,7 +252,7 @@
       return;
     }
     elWarn.classList.remove("hidden");
-    elWarn.textContent = "有 " + list.length + " 个工具被忽略：\n· " + list.join("\n· ");
+    elWarn.textContent = "已忽略 " + list.length + " 项：\n" + list.join("\n");
   }
 
   // ------------------------------------------------------------ 消息处理
@@ -256,41 +278,41 @@
       case "check": {
         state.status[data.id] = data.installed ? "ok" : "miss";
         var name = (state.tools.find(function (t) { return t.id === data.id; }) || {}).name || data.id;
-        log("检测 " + name + " → " + (data.installed ? "环境就绪（退出码 " + data.exitCode + "）"
-                                                       : "缺少环境（退出码 " + data.exitCode + "）"));
+        log(name + " → " + (data.installed ? "就绪" + " (" + data.exitCode + ")"
+                                                       : "缺环境 (" + data.exitCode + ")"));
         if (data.output) log(data.output.trim());
         render();
         break;
       }
 
       case "install_start":
-        log("执行安装指令：" + data.command);
+        log(data.command);
         break;
 
       case "install": {
         var okName = (state.tools.find(function (t) { return t.id === data.id; }) || {}).name || data.id;
-        log(okName + " 安装" + (data.ok ? "完成" : "失败") + "（退出码 " + data.exitCode + "）");
+        log(okName + " 安装" + (data.ok ? "完成" : "失败") + " (" + data.exitCode + ")");
         if (data.output) log(data.output.trim());
         break;
       }
 
       case "help":
-        elModalTitle.textContent = (data.name || data.id) + " · 帮助";
+        elModalTitle.textContent = data.name || data.id;
         elModalSub.textContent = "tools/" + data.id + "/help.md";
         elModalBody.innerHTML = markdownToHtml(data.markdown || "");
         elModal.classList.remove("hidden");
         break;
 
       case "action":
-        log(data.ok ? ("已启动：" + (data.label || "")) : ("启动失败：" + (data.label || "")));
+        log((data.ok ? "启动 " : "启动失败 ") + (data.label || ""));
         break;
 
       case "hidden":
-        log("已隐藏到系统托盘，点击托盘图标可以重新打开。");
+        log("已收进托盘");
         break;
 
       case "openFolder":
-        log("已打开目录：" + (data.path || ""));
+        log(data.path || "");
         break;
 
       case "appInfo":
@@ -305,7 +327,7 @@
 
   // ------------------------------------------------------------ 交互绑定
   document.getElementById("btn-refresh").addEventListener("click", function () {
-    log("重新扫描 tools 目录…");
+    log("扫描");
     send({ cmd: "refresh" });
   });
 
@@ -319,6 +341,7 @@
 
   document.getElementById("btn-clear").addEventListener("click", function () {
     elLog.textContent = "";
+    if (elConsole) elConsole.classList.add("hidden");
   });
 
   document.getElementById("modal-close").addEventListener("click", function () {
@@ -338,6 +361,9 @@
     if (e.key === "Escape") elModal.classList.add("hidden");
   });
 
-  log("界面已就绪，正在读取工具列表…");
+
   send({ cmd: "ready" });
 })();
+
+
+

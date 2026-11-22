@@ -9,6 +9,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <dwmapi.h>
 
 #include "webview2_compat.h"
 
@@ -25,7 +26,7 @@
 namespace {
 
 const wchar_t* kWindowClass = L"TeacherBoxGuiWindow";
-const wchar_t* kWindowTitle = L"TeacherBox 工具箱";
+const wchar_t* kWindowTitle = L"TeacherBox";
 const wchar_t* kVhost       = L"teacherbox.local";
 const UINT     kTrayMessage = WM_APP + 200;
 const UINT     kPostJson    = WM_APP + 201;
@@ -685,7 +686,7 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
   wc.hbrBackground = CreateSolidBrush(RGB(15, 23, 42));
   RegisterClassExW(&wc);
 
-  RECT frame{0, 0, 1180, 760};
+  RECT frame{0, 0, 920, 620};
   AdjustWindowRectEx(&frame, WS_OVERLAPPEDWINDOW, FALSE, 0);
   int w = frame.right - frame.left;
   int h = frame.bottom - frame.top;
@@ -702,6 +703,17 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
   if (g.icon) {
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g.icon);
     SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g.icon);
+  }
+
+  // 标题栏跟随浅色界面（系统默认可能按深色主题画成黑条）
+  {
+    BOOL dark = FALSE;
+    if (FAILED(DwmSetWindowAttribute(hwnd, 20 /*DWMWA_USE_IMMERSIVE_DARK_MODE*/, &dark, sizeof(dark)))
+     && FAILED(DwmSetWindowAttribute(hwnd, 19, &dark, sizeof(dark))) == S_OK) {
+      // 旧版本属性号，失败时静默忽略
+    }
+    COLORREF caption = RGB(0xFF, 0xFD, 0xF8);
+    DwmSetWindowAttribute(hwnd, 35 /*DWMWA_CAPTION_COLOR*/, &caption, sizeof(caption));
   }
 
   AddTrayIcon();
@@ -724,5 +736,7 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
   tb::Log(L"gui", "=== GUI 退出 ===");
   return 0;
 }
+
+
 
 

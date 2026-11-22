@@ -3,62 +3,51 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>TeacherBox 工具箱</title>
+<title>TeacherBox</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">T</div>
-      <div class="brand-text">
-        <h1>TeacherBox</h1>
-        <p>教师工具箱 · 放进 tools 目录即插即用</p>
-      </div>
-    </div>
-    <div class="top-actions">
-      <span class="badge" id="version">v1.0.0</span>
-      <button class="btn ghost" id="btn-folder">工具目录</button>
-      <button class="btn ghost" id="btn-refresh">重新扫描</button>
-      <button class="btn ghost" id="btn-hide">隐藏到托盘</button>
+  <header class="bar">
+    <div class="logo">T</div>
+    <h1>TeacherBox</h1>
+    <span class="ver" id="version">v1.0.0</span>
+    <div class="acts">
+      <button class="btn" id="btn-folder">目录</button>
+      <button class="btn" id="btn-refresh">刷新</button>
+      <button class="btn" id="btn-hide">托盘</button>
     </div>
   </header>
 
   <main class="content">
-    <div id="warnings" class="warnings hidden"></div>
-
-    <div class="toolbar">
-      <input id="search" class="search" type="text" placeholder="搜索工具名称或编号…" />
-      <span class="counter" id="counter">0 个工具</span>
+    <div class="searchbar">
+      <input id="search" type="text" placeholder="过滤" spellcheck="false" />
+      <span class="count" id="counter">0</span>
     </div>
 
+    <div id="warnings" class="warn hidden"></div>
     <div id="grid" class="grid"></div>
-    <div id="empty" class="empty hidden">
-      <div class="empty-title">tools 目录里还没有工具</div>
-      <div class="empty-sub">把工具文件夹放进程序目录的 <code>tools</code> 里，目录名就是工具编号（只允许字母、数字和 <code>._-+</code>）。</div>
-    </div>
+    <div id="empty" class="empty hidden">tools 目录是空的。</div>
   </main>
 
-  <section class="console">
-    <div class="console-head">
-      <span>运行输出</span>
-      <button class="btn tiny ghost" id="btn-clear">清空</button>
-    </div>
-    <pre id="log" class="log"></pre>
+  <section class="console hidden">
+    <pre id="log"></pre>
+    <button class="link" id="btn-clear">清空</button>
   </section>
 
   <div id="modal" class="modal hidden">
-    <div class="modal-card">
-      <div class="modal-head">
+    <div class="sheet">
+      <div class="sheet-head">
         <div>
-          <div class="modal-title" id="modal-title">帮助</div>
-          <div class="modal-sub" id="modal-sub"></div>
+          <div class="sheet-title" id="modal-title">帮助</div>
+          <div class="sheet-path" id="modal-sub"></div>
         </div>
-        <button class="btn tiny ghost" id="modal-close">关闭</button>
+        <button class="btn" id="modal-close">关闭</button>
       </div>
-      <div class="modal-body markdown" id="modal-body"></div>
+      <div class="sheet-body markdown" id="modal-body"></div>
     </div>
   </div>
 
   <script src="app.js"></script>
 </body>
 </html>
+
