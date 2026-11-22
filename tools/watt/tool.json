@@ -1,0 +1,17 @@
+{
+  "name": "Watt Toolkit",
+  "version": "3.x",
+  "description": "GitHub 访问加速",
+  "check": {
+    "command": "reg query HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Steam++ /v DisplayName",
+    "timeout": 20
+  },
+  "install": {
+    "command": "winget install -e --id 9MTCFHS560NG --source msstore --accept-package-agreements --accept-source-agreements",
+    "timeout": 1800
+  },
+  "actions": [
+    { "label": "打开", "command": "start \"\" \"C:\\Program Files\\Steam++\\Steam++.exe\"" }
+  ],
+  "help": "help.md"
+}

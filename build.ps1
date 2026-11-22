@@ -68,7 +68,19 @@ if ($SkipAssemble) {
 
 # 3. 装配 dist
 Write-Host "装配 dist…" -ForegroundColor Cyan
-if (Test-Path $distDir) { Remove-Item -LiteralPath $distDir -Recurse -Force }
+if (Test-Path $distDir) {
+  try {
+    Remove-Item -LiteralPath $distDir -Recurse -Force -ErrorAction Stop
+  } catch {
+    # 工具目录下如果还挂着 shell / python 之类的进程，目录会被占住，单个清掉，
+    # 剩下的交给下面的复制覆盖，不让整个构建失败。
+    Write-Host "  dist 有文件被占用，逐个清理…" -ForegroundColor DarkYellow
+    Get-ChildItem -LiteralPath $distDir -Force | ForEach-Object {
+      try { Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop }
+      catch { Write-Host "  跳过 $($_.Name)" -ForegroundColor DarkYellow }
+    }
+  }
+}
 New-Item -ItemType Directory -Force $distDir | Out-Null
 
 foreach ($exe in "main.exe", "update.exe", "gui.exe") {
