@@ -227,3 +227,38 @@ pwsh -File .\scripts\smoke-crash.ps1 -Rounds 10    # 连崩 10 次 -> 弹「致�
 | `main.exe` 一运行就「拒绝访问」，随后文件消失 | 杀软（实测 360 安全卫士）把启动器当木马清掉了。把 `dist` 目录加进 360 的「信任区 / 白名单」，或重新编译（本工程已带版本信息+清单，能避开该误报） |
 | 首次启动偶尔「拒绝访问」，几秒后正常 | 刚编译出来的 exe 被杀软实时扫描占用，稍等 2–3 秒再启动即可 |
 | 窗口只出现在任务栏、看不到界面 | 父进程若给子进程设了 `STARTF_USESHOWWINDOW`，子进程首次 `ShowWindow` 会被忽略；`main.cpp` 的 `SpawnChild` 已刻意不设该标志，`gui.cpp` 里也连调两次 `ShowWindow` |
+
+## 1.1.3 新增
+
+- **工具市场**：页签「工具市场」从 `market.json`（raw.githubusercontent.com）拉清单，点「下载」直接把 zip 装进 `tools/`，已装的显示「装好了」。
+- **拖拽 / 上传安装**：把工具包 zip 拖进窗口就装；也可以点「导入」选本地 zip。装完立刻出现在「本机工具」。
+- **中文桌面快捷方式**：首次启动如果没有，就在桌面建一个 `老师工具箱.lnk`，指向 `main.exe`，图标取 exe 里的资源。
+- **内置工具 `agent-spec`**：一份写给 Agent 看的工具写作规范，`agent-spec.md` 与 `agent-spec.txt` 内容一致；两个按钮「打开 TXT」「复制 MD 到桌面」。
+- 界面上所有「插件」字样统一改成「工具」。
+
+## 签名（发布者 minifan）
+
+三个 exe 都用 `scripts\sign.ps1` 自签，Subject 固定 `CN=minifan, O=minifan`，资源里 `CompanyName / LegalCopyright / Publisher` 也都是 minifan。
+
+自签证书没被系统信任时，双击 exe 会提示「未知发布者」。包里的 `安装证书.bat` 会把 `TeacherBox.cer` 装进本机的「受信任的根」和「受信任的发布者」，**装一次就够**：
+
+```
+双击 安装证书.bat  →  是  →  重新打开 main.exe
+```
+
+想彻底免掉这个提示，只有买 OV/EV 代码签名证书（每年几百到几千），自签做不到。
+
+## 启动系统工具被拒
+
+「系统自带小程序」里的任务管理器、服务、设置这类工具，普通权限下 `ShellExecute` 偶尔返回「拒绝访问 / 需要提升」。1.1.3 起 `LaunchDetached` 会再试一次带 `runas`（UAC 提升），用户点「是」就能起来；用户点「否」不会反复弹。
+
+如果整个 exe 都被「拒绝访问」并随后被删，那是 360 之类的杀软误杀，把 `dist` 目录加进白名单即可（见下方排查表）。
+
+## GitHub Pages（*.github.io）
+
+1. 新建仓库，名字必须是 `<用户名>.github.io`（例如 `minifan2026.github.io`），公开
+2. 仓库根放 `index.html`，推到 `main`
+3. 仓库 Settings → Pages → Source 选 `Deploy from a branch`，分支 `main`、目录 `/ (root)`，Save
+4. 等 1–2 分钟，访问 `https://<用户名>.github.io`
+
+也可以给别的仓库开 Pages（Settings → Pages 里任选分支/目录），只是没有那个好记的域名。`<用户名>.github.io` 一个账号只能有一个。

@@ -512,8 +512,25 @@ bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workDir
   sei.lpFile = commandLine.c_str();
   sei.lpDirectory = workDir.empty() ? nullptr : workDir.c_str();
   sei.nShow = SW_SHOWNORMAL;
-  if (!ShellExecuteExW(&sei)) return false;
-  if (sei.hProcess) CloseHandle(sei.hProcess);
+  if (ShellExecuteExW(&sei)) {
+    if (sei.hProcess) CloseHandle(sei.hProcess);
+    return true;
+  }
+
+  // 系统工具（任务管理器、服务、设置等）普通权限下会被拒，再试一次带 UAC 的 runas；
+  // 用户自己点了“否”就到此为止，不再重复弹窗。
+  DWORD err = GetLastError();
+  if (err != ERROR_ELEVATION_REQUIRED && err != ERROR_ACCESS_DENIED) return false;
+
+  SHELLEXECUTEINFOW sei2{};
+  sei2.cbSize = sizeof(sei2);
+  sei2.fMask = SEE_MASK_NOCLOSEPROCESS;
+  sei2.lpVerb = L"runas";
+  sei2.lpFile = commandLine.c_str();
+  sei2.lpDirectory = workDir.empty() ? nullptr : workDir.c_str();
+  sei2.nShow = SW_SHOWNORMAL;
+  if (!ShellExecuteExW(&sei2)) return false;
+  if (sei2.hProcess) CloseHandle(sei2.hProcess);
   return true;
 }
 

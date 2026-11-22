@@ -311,11 +311,60 @@ void PostImportResult(bool ok, const std::string& id, const std::string& message
   }
 }
 
+// 页面里拖进来的 zip 是 base64 文本，这里还原成文件再走安装流程
+static const char* kB64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+void ImportZipAsync(const std::wstring& zipPath, const std::string& preferId);   // 前置声明
+
+std::string Base64Decode(const std::string& in) {
+  std::string out;
+  int val = 0, bits = 0;
+  for (char ch : in) {
+    if (ch == '=' || ch == '\n' || ch == '\r' || ch == ' ') continue;
+    const char* p = (ch == '+') ? kB64 + 62 : (ch == '/') ? kB64 + 63 : strchr(kB64, ch);
+    if (!p || ch == '\0') continue;
+    val = (val << 6) | (int)(p - kB64);
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      out.push_back((char)((val >> bits) & 0xFF));
+    }
+  }
+  return out;
+}
+
+void ImportFromPageData(const std::string& fileName, const std::string& b64) {
+  std::string bytes = Base64Decode(b64);
+  if (bytes.size() < 4 || bytes[0] != 'P' || bytes[1] != 'K') {
+    PostImportResult(false, "", "收到的不是 zip 文件");
+    return;
+  }
+  std::wstring stem = tb::ToWide(fileName);
+  size_t dot = stem.find_last_of(L'.');
+  if (dot != std::wstring::npos) stem = stem.substr(0, dot);
+  std::wstring zip = tb::JoinPath(tb::TempDir(), L"tb-drop-" + tb::ToWide(tb::NowStampForFile()) + L".zip");
+  if (!tb::WriteFileUtf8(zip, bytes)) {
+    PostImportResult(false, "", "临时文件写入失败");
+    return;
+  }
+  ImportZipAsync(zip, tb::ToUtf8(stem));
+}
+
 void ImportZipAsync(const std::wstring& zipPath, const std::string& preferId) {
   tb::Log(L"gui", "[import] zip： " + tb::ToUtf8(zipPath));
   PostJson("{\"type\":\"importStart\",\"source\":" + tb::Json::Quote(tb::ToUtf8(zipPath)) + "}");
 
-  std::thread([zipPath, preferId]() {
+  // 没指定 id 时用 zip 自身的文件名（而不是临时目录名）当工具目录名
+  std::string prefer = preferId;
+  if (prefer.empty()) {
+    size_t sep = zipPath.find_last_of(L"\\/");
+    std::wstring name = (sep == std::wstring::npos) ? zipPath : zipPath.substr(sep + 1);
+    size_t dot = name.find_last_of(L'.');
+    if (dot != std::wstring::npos && dot > 0) name = name.substr(0, dot);
+    prefer = SanitizeId(tb::ToUtf8(name));
+  }
+
+  std::thread([zipPath, prefer]() {
     std::wstring temp = tb::JoinPath(tb::TempDir(),
                                      L"tb-import-" + tb::ToWide(tb::NowStampForFile()));
     std::string error;
@@ -325,7 +374,7 @@ void ImportZipAsync(const std::wstring& zipPath, const std::string& preferId) {
       error = "解压失败（zip 可能损坏或被占用）";
     } else {
       std::wstring root = FindToolRoot(temp);
-      if (!InstallPackage(root, preferId, id, error)) {
+      if (!InstallPackage(root, prefer, id, error)) {
         // 错误信息已经在 error 里
       }
     }
@@ -388,20 +437,26 @@ void ImportMarketItem(const std::string& id) {
 void ImportFromDialog() {
   wchar_t path[MAX_PATH * 2] = {0};
   OPENFILENAMEW ofn{};
-  ofn.hwndOwner = g.hwnd;
   ofn.lStructSize = sizeof(ofn);
+  ofn.hwndOwner = g.hwnd;
   ofn.lpstrFilter = L"工具包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0";
   ofn.lpstrFile = path;
   ofn.nMaxFile = MAX_PATH * 2;
   ofn.lpstrTitle = L"选择工具包";
   ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-  if (!GetOpenFileNameW(&ofn)) return;
+  tb::Log(L"gui", "[import] 打开选择框");
+  BOOL ok = GetOpenFileNameW(&ofn);
+  if (!ok) {
+    tb::Log(L"gui", "[import] 选择框取消或失败，CommDlgExtendedError=" +
+                        std::to_string((unsigned)CommDlgExtendedError()));
+    return;
+  }
+  tb::Log(L"gui", "[import] 选中 " + tb::ToUtf8(std::wstring(path)));
   ImportZipAsync(path, "");
 }
 
 // 拖进窗口：zip 解压安装，目录直接安装
-void HandleDroppedFiles(HDROP drop) {
-  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+void HandleDroppedFiles(HDROP drop) {  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
   for (UINT i = 0; i < count; ++i) {
     wchar_t path[MAX_PATH * 2] = {0};
     if (DragQueryFileW(drop, i, path, MAX_PATH * 2) == 0) continue;
@@ -587,6 +642,8 @@ void HandleMessage(const std::string& text) {
     ImportMarketItem(id);
   } else if (cmd == "importFile") {
     ImportFromDialog();
+  } else if (cmd == "importData") {
+    ImportFromPageData(msg.GetString("name", "tool.zip"), msg.GetString("data", ""));
   } else if (cmd == "openFolder") {
     std::string which = msg.GetString("target", "tools");
     std::wstring dir = (which == "logs") ? tb::LogDir() : g.toolsDir;
@@ -686,15 +743,8 @@ public:
     GetClientRect(g.hwnd, &rc);
     controller->put_Bounds(rc);
     controller->put_IsVisible(TRUE);
-
-    // WebView2 默认自己吃掉文件拖放，关掉它，让外层窗口收 WM_DROPFILES
-    ICoreWebView2Controller4* c4 = nullptr;
-    if (SUCCEEDED(controller->QueryInterface(kIID_ICoreWebView2Controller4,
-                                             reinterpret_cast<void**>(&c4))) &&
-        c4) {
-      c4->put_AllowExternalDrop(FALSE);
-      c4->Release();
-    }
+    // 注意：不关 AllowExternalDrop。文件拖放走页面里 HTML5 的 drop 事件
+    // （WebView2 的 chrome 子窗口会吃掉 WM_DROPFILES，只在宿主窗口接是收不到的）
 
     ICoreWebView2Settings* settings = nullptr;
     if (SUCCEEDED(webview->get_Settings(&settings)) && settings) {

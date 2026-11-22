@@ -528,6 +528,58 @@
   });
 
 
+  // ------------------------------------------------------------ 拖放
+  // WebView2 的 chrome 子窗口会吃掉 WM_DROPFILES，所以文件拖放开在页面里接，
+  // 读成 base64 交给宿主去解压安装
+  var elDropMask = document.getElementById("dropmask");
+  var dragDepth = 0;
+
+  window.addEventListener("dragenter", function (e) {
+    e.preventDefault();
+    dragDepth++;
+    if (!elDropMask) return;
+    var hasFiles = e.dataTransfer && e.dataTransfer.types &&
+                   e.dataTransfer.types.indexOf("Files") >= 0;
+    if (hasFiles) elDropMask.classList.remove("hidden");
+  });
+
+  window.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  });
+
+  window.addEventListener("dragleave", function (e) {
+    e.preventDefault();
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0 && elDropMask) elDropMask.classList.add("hidden");
+  });
+
+  window.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dragDepth = 0;
+    if (elDropMask) elDropMask.classList.add("hidden");
+    var files = e.dataTransfer ? e.dataTransfer.files : null;
+    if (!files || !files.length) return;
+    var file = files[0];
+    if (!/\.zip$/i.test(file.name)) {
+      log("只认 .zip 工具包");
+      return;
+    }
+    if (file.size > 32 * 1024 * 1024) {
+      log("包太大了（限 32 MB），先精简一下");
+      return;
+    }
+    log("读取 " + file.name);
+    var reader = new FileReader();
+    reader.onload = function () {
+      var result = String(reader.result || "");
+      var comma = result.indexOf(",");
+      send({ cmd: "importData", name: file.name, data: comma >= 0 ? result.slice(comma + 1) : "" });
+    };
+    reader.onerror = function () { log("读取失败"); };
+    reader.readAsDataURL(file);
+  });
+
   send({ cmd: "ready" });
 })();
 
