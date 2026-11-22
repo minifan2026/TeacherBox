@@ -35,8 +35,11 @@ const UINT     kTrayMessage = WM_APP + 200;
 const UINT     kPostJson    = WM_APP + 201;
 const UINT     kTrayId      = 1;
 
-// 工具市场清单：仓库根目录的 market.json，raw 与 jsDelivr 互相兜底
-const wchar_t* kMarketUrl = L"https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market.json";
+// 工具市场：GitHub Pages 上的静态站，一页 50 条（api/page-<offset>.json）
+// 拉不动就回落到仓库里的 market.json（老地址，做兜底）
+const wchar_t* kMarketBase     = L"https://minifan2026.github.io/TeacherBoxWeb";
+const wchar_t* kMarketFallback = L"https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market.json";
+const int      kMarketPage     = 50;
 
 // IID_IUnknown（避免依赖 uuid.lib）
 const GUID kIID_Unknown = {0x00000000, 0x0000, 0x0000,
@@ -48,6 +51,9 @@ struct MarketItem {
   std::string version;
   std::string description;
   std::string url;
+  std::string author;
+  bool        dev = false;
+  double      size = 0;
 };
 
 struct AppState {
@@ -70,6 +76,8 @@ struct AppState {
   std::vector<MarketItem>   market;
   bool                      marketLoaded  = false;
   bool                      marketFetching = false;
+  int                       marketOffset  = 0;   // 已经取到的条数，也是下一页的 offset
+  int                       marketTotal   = 0;
   std::string               version = "1.0.0";
 };
 
@@ -171,6 +179,8 @@ std::string SanitizeId(const std::string& raw) {
 std::string MarketJson(const std::string& error) {
   std::string s = "{\"type\":\"market\"";
   if (!error.empty()) s += ",\"error\":" + tb::Json::Quote(error);
+  s += ",\"offset\":" + std::to_string(g.marketOffset);
+  s += ",\"total\":" + std::to_string(g.marketTotal);
   s += ",\"items\":[";
   std::lock_guard<std::mutex> lock(g_marketLock);
   for (size_t i = 0; i < g.market.size(); ++i) {
@@ -181,6 +191,10 @@ std::string MarketJson(const std::string& error) {
     s += ",\"version\":" + tb::Json::Quote(m.version);
     s += ",\"description\":" + tb::Json::Quote(m.description);
     s += ",\"url\":" + tb::Json::Quote(m.url);
+    s += ",\"author\":" + tb::Json::Quote(m.author);
+    s += ",\"dev\":";
+    s += m.dev ? "true" : "false";
+    s += ",\"size\":" + std::to_string((long long)m.size);
     s += ",\"installed\":";
     s += tb::DirExists(tb::JoinPath(g.toolsDir, tb::ToWide(m.id))) ? "true" : "false";
     s += "}";
@@ -189,51 +203,99 @@ std::string MarketJson(const std::string& error) {
   return s;
 }
 
-void FetchMarketAsync() {
+// 解析一页清单：新接口是 {offset,total,items:[…]}，老 market.json 是纯数组
+bool ParseMarketText(const std::string& text, std::vector<MarketItem>& items, int& total) {
+  std::string err;
+  tb::Json doc = tb::Json::Parse(text, &err);
+  if (!err.empty()) return false;
+
+  const tb::Json* arr = nullptr;
+  if (doc.IsObject()) {
+    arr = doc.Find("items");
+    total = (int)doc.GetNumber("total", 0);
+  } else if (doc.IsArray()) {
+    arr = &doc;
+  }
+  if (!arr || !arr->IsArray()) return false;
+
+  for (const tb::Json& one : arr->items) {
+    if (!one.IsObject()) continue;
+    MarketItem m;
+    m.id = one.GetString("id", "");
+    m.name = one.GetString("name", m.id);
+    m.version = one.GetString("version", "");
+    m.description = one.GetString("description", one.GetString("desc", ""));
+    m.url = one.GetString("url", one.GetString("file", one.GetString("package", "")));
+    m.author = one.GetString("author", "");
+    m.dev = one.GetBool("dev", false);
+    m.size = one.GetNumber("size", 0);
+    if (m.url.empty()) m.url = "tools/" + m.id + ".zip";
+    if (!tb::IsValidToolId(m.id)) continue;
+    items.push_back(m);
+  }
+  if (total <= 0) total = (int)items.size();
+  return true;
+}
+
+// 取一页（50 条）：offset=0 追加第一页，之后点「加载更多」按 50 递增
+void FetchMarketAsync(int offset, bool append) {
   if (g.marketFetching) return;
   g.marketFetching = true;
   PostJson("{\"type\":\"marketLoading\",\"busy\":true}");
 
-  std::thread([]() {
+  std::thread([offset, append]() {
     std::string text;
     bool netErr = false;
     std::string error;
     std::vector<MarketItem> items;
+    int total = 0;
 
-    if (!tb::HttpGetText(kMarketUrl, text, &netErr)) {
-      error = netErr ? "连不上 GitHub，先打开 Watt Toolkit 里的 GitHub 加速再试"
-                     : "清单地址返回异常";
-    } else {
-      std::string err;
-      tb::Json doc = tb::Json::Parse(text, &err);
-      if (!err.empty() || !doc.IsObject()) {
-        error = "market.json 解析失败";
-      } else {
-        const tb::Json* arr = doc.Find("items");
-        if (arr && arr->IsArray()) {
-          for (const tb::Json& one : arr->items) {
-            if (!one.IsObject()) continue;
-            MarketItem m;
-            m.id = one.GetString("id", "");
-            m.name = one.GetString("name", m.id);
-            m.version = one.GetString("version", "");
-            m.description = one.GetString("description", one.GetString("desc", ""));
-            m.url = one.GetString("url", one.GetString("package", ""));
-            if (!tb::IsValidToolId(m.id) || m.url.empty()) continue;
-            items.push_back(m);
-          }
+    std::wstring url = std::wstring(kMarketBase) + L"/api/page-" + tb::ToWide(std::to_string(offset)) + L".json";
+    bool ok = tb::HttpGetText(url, text, &netErr);
+    bool parsed = ok && ParseMarketText(text, items, total);
+
+    // 第一页拉不动就回落到仓库里的老清单，保证没建 Pages 之前也能用
+    if ((!parsed || items.empty()) && offset == 0) {
+      std::string fb;
+      bool fbErr = false;
+      if (tb::HttpGetText(kMarketFallback, fb, &fbErr)) {
+        std::vector<MarketItem> fbItems;
+        int fbTotal = 0;
+        if (ParseMarketText(fb, fbItems, fbTotal) && !fbItems.empty()) {
+          items = fbItems;
+          total = fbTotal;
+          parsed = true;
+          ok = true;
         }
-        if (items.empty()) error = "清单里没有可用工具";
+      }
+    }
+
+    if (!parsed) {
+      error = netErr ? "连不上工具市场，先打开 Watt Toolkit 里的 GitHub 加速再试"
+                     : "清单地址返回异常";
+    } else if (items.empty() && offset > 0) {
+      error = "没有更多了";
+    }
+
+    // 绝对路径要拼成完整 URL，不然下载不到
+    for (MarketItem& m : items) {
+      if (m.url.find("://") == std::string::npos) {
+        m.url = std::string(tb::ToUtf8(std::wstring(kMarketBase))) + "/" + m.url;
       }
     }
 
     {
       std::lock_guard<std::mutex> lock(g_marketLock);
-      g.market = items;
+      if (append) g.market.insert(g.market.end(), items.begin(), items.end());
+      else g.market = items;
+      g.marketOffset = (int)g.market.size();
+      if (total > g.marketTotal) g.marketTotal = total;
+      if (g.marketTotal < g.marketOffset) g.marketTotal = g.marketOffset;
     }
-    g.marketLoaded = !error.empty() ? false : true;
+    g.marketLoaded = !error.empty() ? g.marketLoaded : true;
     g.marketFetching = false;
-    tb::Log(L"gui", "[market] 清单 " + std::to_string(items.size()) + " 项" +
+    tb::Log(L"gui", "[market] offset " + std::to_string(offset) + " -> " + std::to_string(items.size()) +
+                        " 条，累计 " + std::to_string(g.marketOffset) + "/" + std::to_string(g.marketTotal) +
                         (error.empty() ? "" : "，错误：" + error));
     PostJson(MarketJson(error));
     PostJson("{\"type\":\"marketLoading\",\"busy\":false}");
@@ -634,10 +696,23 @@ void HandleMessage(const std::string& text) {
     RunAction(id, (int)msg.GetNumber("index", 0));
   } else if (cmd == "market") {
     if (g.marketLoaded) PostJson(MarketJson(""));
-    else FetchMarketAsync();
+    else FetchMarketAsync(0, false);
+  } else if (cmd == "marketMore") {          // 加载更多：再取 50 条
+    if (g.marketOffset >= g.marketTotal && g.marketTotal > 0) {
+      PostJson("{\"type\":\"marketLoading\",\"busy\":false}");
+      PostJson(MarketJson("没有更多了"));
+    } else {
+      FetchMarketAsync(g.marketOffset, true);
+    }
   } else if (cmd == "marketRefresh") {
     g.marketLoaded = false;
-    FetchMarketAsync();
+    g.marketOffset = 0;
+    g.marketTotal = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_marketLock);
+      g.market.clear();
+    }
+    FetchMarketAsync(0, false);
   } else if (cmd == "marketInstall") {
     ImportMarketItem(id);
   } else if (cmd == "importFile") {

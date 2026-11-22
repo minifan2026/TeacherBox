@@ -417,3 +417,23 @@ h1 {
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover { background: #b9b1a0; background-clip: content-box; }
+
+.tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px solid var(--red);
+  border-radius: 2px;
+  color: var(--red);
+  font-size: 11px;
+  line-height: 16px;
+  vertical-align: 1px;
+}
+
+.market-more {
+  margin-top: 10px;
+}
+
+.market-more .hint {
+  flex: 1;
+}

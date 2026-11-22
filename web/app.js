@@ -15,6 +15,8 @@
     marketNote: "",
     marketBusy: {},
     marketLoaded: false,
+    marketOffset: 0,
+    marketTotal: 0,
     marketLoading: false
   };
 
@@ -290,6 +292,12 @@
     title.className = "card-title";
     title.textContent = item.name || item.id;
     line.appendChild(title);
+    if (item.dev) {
+      var tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "开发者";
+      line.appendChild(tag);
+    }
     if (item.version) {
       var ver = document.createElement("span");
       ver.className = "card-ver";
@@ -343,6 +351,18 @@
     elCounter.textContent = state.view === "market"
       ? String(state.market.length)
       : String(state.tools.length);
+
+    var more = document.getElementById("btn-market-more");
+    var stat = document.getElementById("market-stat");
+    if (state.marketTotal > 0) {
+      stat.textContent = "已显示 " + state.market.length + " / 共 " + state.marketTotal + " 个";
+      var canMore = state.market.length < state.marketTotal;
+      more.classList.toggle("hidden", !canMore);
+      more.textContent = state.marketLoading ? "拉取中…" : "加载更多";
+    } else {
+      stat.textContent = "";
+      more.classList.add("hidden");
+    }
   }
 
   function showMarketError(text) {
@@ -388,8 +408,10 @@
 
       case "market":
         state.market = data.items || [];
+        state.marketTotal = data.total || state.market.length;
+        state.marketOffset = data.offset || state.market.length;
         state.marketLoading = false;
-        state.marketLoaded = !data.error;
+        if (!data.error) state.marketLoaded = true;
         state.marketBusy = {};
         showMarketError(data.error || "");
         renderMarket();
@@ -496,6 +518,13 @@
 
   document.getElementById("tab-local").addEventListener("click", function () { setView("local"); });
   document.getElementById("tab-market").addEventListener("click", function () { setView("market"); });
+
+  document.getElementById("btn-market-more").addEventListener("click", function () {
+    if (state.marketLoading) return;
+    state.marketLoading = true;
+    renderMarket();
+    send({ cmd: "marketMore" });
+  });
 
   document.getElementById("btn-market-refresh").addEventListener("click", function () {
     state.marketLoading = true;
