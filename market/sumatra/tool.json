@@ -1,0 +1,8 @@
+{
+  "name": "SumatraPDF 阅读器",
+  "version": "3.6",
+  "description": "轻量 PDF 阅读器，翻页快、能记住上次位置",
+  "check": { "command": "where /q SumatraPDF.exe && echo ok || if exist \"%LOCALAPPDATA%\\SumatraPDF\\SumatraPDF.exe\" (echo ok)", "timeout": 20 },
+  "install": { "command": "winget install --id SumatraPDF.SumatraPDF -e --accept-package-agreements --accept-source-agreements --disable-interactivity", "timeout": 900 },
+  "actions": [ { "label": "打开", "command": "%LOCALAPPDATA%\\SumatraPDF\\SumatraPDF.exe" } ]
+}

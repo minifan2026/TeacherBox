@@ -1,0 +1,8 @@
+{
+  "name": "VS Code 编辑器",
+  "version": "1.146",
+  "description": "改脚本、看代码、批量改文本",
+  "check": { "command": "if exist \"%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe\" (echo ok)", "timeout": 20 },
+  "install": { "command": "winget install --id Microsoft.VisualStudioCode -e --accept-package-agreements --accept-source-agreements --disable-interactivity", "timeout": 1500 },
+  "actions": [ { "label": "打开", "command": "\"%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe\"" } ]
+}

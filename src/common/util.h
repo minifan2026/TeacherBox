@@ -13,6 +13,8 @@ std::wstring JoinPath(const std::wstring& a, const std::wstring& b);
 std::wstring AppDataDir();               // %LOCALAPPDATA%\TeacherBox
 std::wstring LogDir();                   // AppDataDir()\logs
 std::wstring FeedbackDir();              // AppDataDir()\feedback
+std::wstring DesktopDir();               // 当前用户的桌面目录（跟随系统重定向）
+std::wstring TempDir();                  // %TEMP%
 
 std::string  ToUtf8(const std::wstring& s);
 std::wstring ToWide(const std::string& s);
@@ -23,6 +25,13 @@ bool         EnsureDir(const std::wstring& path);
 bool         FileExists(const std::wstring& path);
 bool         DirExists(const std::wstring& path);
 std::vector<std::wstring> ListDirs(const std::wstring& path);
+bool         CopyTree(const std::wstring& src, const std::wstring& dst);
+bool         DeleteTree(const std::wstring& path);
+
+// ---------- 网络 ----------
+// GitHub 直连时常抽风，raw.githubusercontent.com 与 cdn.jsdelivr.net 互相兜底
+bool HttpGetText(const std::wstring& url, std::string& out, bool* networkError = nullptr);
+bool HttpGetFile(const std::wstring& url, const std::wstring& dstPath);   // 二进制按字节落盘
 
 // ---------- 时间 ----------
 std::string  NowDateTime();        // 2026-11-22 13:04:05

@@ -11,6 +11,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include "ipc.h"
 #include "json.h"
@@ -205,6 +206,49 @@ void ShowFatal() {
               MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
 }
 
+// ------------------------------------------------------------------ 桌面快捷方式
+
+// CLSID_ShellLink / IID_IShellLinkW / IID_IPersistFile，硬编码省掉 uuid.lib
+const GUID kCLSID_ShellLink  = {0x00021401, 0x0000, 0x0000,
+                                {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+const GUID kIID_IShellLinkW  = {0x000214F9, 0x0000, 0x0000,
+                                {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+const GUID kIID_IPersistFile = {0x0000010B, 0x0000, 0x0000,
+                                {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+// 桌面没有「老师工具箱」就建一个；早期版本的 TeacherBox.lnk 顺手清掉，免得桌面上两个图标
+void EnsureDesktopShortcut() {
+  std::wstring desk = tb::DesktopDir();
+  if (desk.empty()) return;
+
+  std::wstring link = tb::JoinPath(desk, L"老师工具箱.lnk");
+  std::wstring oldLink = tb::JoinPath(desk, L"TeacherBox.lnk");
+  if (tb::FileExists(oldLink)) DeleteFileW(oldLink.c_str());
+  if (tb::FileExists(link)) return;
+
+  std::wstring exe = tb::JoinPath(tb::ExeDir(), L"main.exe");
+
+  IShellLinkW* link0 = nullptr;
+  if (FAILED(CoCreateInstance(kCLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, kIID_IShellLinkW,
+                              reinterpret_cast<void**>(&link0))) ||
+      !link0) {
+    tb::Log(L"main", "[shortcut] CoCreateInstance(ShellLink) 失败");
+    return;
+  }
+  link0->SetPath(exe.c_str());
+  link0->SetWorkingDirectory(tb::ExeDir().c_str());
+  link0->SetDescription(L"老师工具箱");
+  link0->SetIconLocation(exe.c_str(), 0);
+
+  IPersistFile* pf = nullptr;
+  if (SUCCEEDED(link0->QueryInterface(kIID_IPersistFile, reinterpret_cast<void**>(&pf))) && pf) {
+    if (SUCCEEDED(pf->Save(link.c_str(), TRUE)))
+      tb::Log(L"main", "[shortcut] 已创建桌面快捷方式：老师工具箱");
+    pf->Release();
+  }
+  link0->Release();
+}
+
 } // namespace
 
 int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int) {
@@ -228,6 +272,10 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int) {
 
   tb::EnsureDir(tb::LogDir());
   tb::Log(L"main", std::string("=== TeacherBox 主程序启动 v") + kVersion + " ===");
+
+  // 快捷方式用 COM 建，先初始化套间（后面不影响子进程）
+  HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  EnsureDesktopShortcut();
 
   const std::wstring dir = tb::ExeDir();
   const std::wstring updateExe = tb::JoinPath(dir, L"update.exe");
@@ -289,5 +337,6 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int) {
     ReleaseMutex(mutex);
     CloseHandle(mutex);
   }
+  if (co == S_OK) CoUninitialize();
   return 0;
 }

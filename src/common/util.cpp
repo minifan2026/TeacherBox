@@ -2,6 +2,7 @@
 
 #include <shlobj.h>
 #include <shellapi.h>
+#include <winhttp.h>
 #include <vector>
 #include <cstdint>
 #include <ctime>
@@ -55,6 +56,20 @@ std::wstring FeedbackDir() {
   static std::wstring d;
   if (d.empty()) { d = JoinPath(AppDataDir(), L"feedback"); EnsureDir(d); }
   return d;
+}
+
+std::wstring DesktopDir() {
+  wchar_t buf[MAX_PATH * 2] = {0};
+  if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, 0, buf))) return buf;
+  wchar_t up[MAX_PATH * 2] = {0};
+  if (GetEnvironmentVariableW(L"USERPROFILE", up, MAX_PATH * 2)) return JoinPath(up, L"Desktop");
+  return std::wstring();
+}
+
+std::wstring TempDir() {
+  wchar_t buf[MAX_PATH * 2] = {0};
+  if (GetEnvironmentVariableW(L"TEMP", buf, MAX_PATH * 2) && buf[0]) return buf;
+  return JoinPath(AppDataDir(), L"temp");
 }
 
 std::string ToUtf8(const std::wstring& s) {
@@ -158,6 +173,175 @@ std::vector<std::wstring> ListDirs(const std::wstring& path) {
   } while (FindNextFileW(h, &fd));
   FindClose(h);
   return out;
+}
+
+// ---------------------------------------------------------------- 目录复制
+
+bool CopyTree(const std::wstring& src, const std::wstring& dst) {
+  if (!DirExists(src)) return false;
+  if (!EnsureDir(dst)) return false;
+
+  WIN32_FIND_DATAW fd{};
+  HANDLE h = FindFirstFileW(JoinPath(src, L"*").c_str(), &fd);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  bool ok = true;
+  do {
+    if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+    std::wstring from = JoinPath(src, fd.cFileName);
+    std::wstring to = JoinPath(dst, fd.cFileName);
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+      ok = CopyTree(from, to) && ok;
+    } else {
+      ok = CopyFileW(from.c_str(), to.c_str(), FALSE) && ok;
+    }
+  } while (FindNextFileW(h, &fd));
+  FindClose(h);
+  return ok;
+}
+
+bool DeleteTree(const std::wstring& path) {
+  if (!DirExists(path)) return true;
+  WIN32_FIND_DATAW fd{};
+  HANDLE h = FindFirstFileW(JoinPath(path, L"*").c_str(), &fd);
+  if (h != INVALID_HANDLE_VALUE) {
+    do {
+      if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+      std::wstring p = JoinPath(path, fd.cFileName);
+      if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL);
+        DeleteTree(p);
+      } else {
+        SetFileAttributesW(p.c_str(), FILE_ATTRIBUTE_NORMAL);
+        DeleteFileW(p.c_str());
+      }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+  }
+  SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL);
+  return RemoveDirectoryW(path.c_str()) != FALSE;
+}
+
+// ---------------------------------------------------------------- 网络
+
+static bool HttpGetRaw(const std::wstring& url, std::vector<char>& out, bool* networkError) {
+  out.clear();
+  URL_COMPONENTS uc{};
+  uc.dwStructSize = sizeof(uc);
+  wchar_t host[256] = {0}, path[4096] = {0};
+  uc.lpszHostName = host;
+  uc.dwHostNameLength = 255;
+  uc.lpszUrlPath = path;
+  uc.dwUrlPathLength = 4095;
+  if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) {
+    if (networkError) *networkError = true;
+    return false;
+  }
+
+  HINTERNET session = WinHttpOpen(L"TeacherBox/1.1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+                                  WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+  if (!session) {
+    if (networkError) *networkError = true;
+    return false;
+  }
+  WinHttpSetTimeouts(session, 15000, 15000, 20000, 30000);
+
+  bool ok = false;
+  HINTERNET conn = WinHttpConnect(session, host, uc.nPort, 0);
+  if (conn) {
+    DWORD flags = (uc.nScheme == INTERNET_SCHEME_HTTPS) ? WINHTTP_FLAG_SECURE : 0;
+    HINTERNET req = WinHttpOpenRequest(conn, L"GET", path, nullptr, WINHTTP_NO_REFERER,
+                                       WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
+    if (req) {
+      if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, nullptr, 0, 0, 0) &&
+          WinHttpReceiveResponse(req, nullptr)) {
+        DWORD status = 0, len = sizeof(status);
+        WinHttpQueryHeaders(req, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, nullptr,
+                            &status, &len, nullptr);
+        if (status >= 200 && status < 300) {
+          DWORD avail = 0;
+          do {
+            avail = 0;
+            if (!WinHttpQueryDataAvailable(req, &avail) || avail == 0) break;
+            size_t old = out.size();
+            out.resize(old + avail);
+            DWORD read = 0;
+            if (!WinHttpReadData(req, out.data() + old, avail, &read)) { out.resize(old); break; }
+            out.resize(old + read);
+            if (out.size() > 128u * 1024u * 1024u) break;
+          } while (avail > 0);
+          ok = true;
+        }
+      }
+      WinHttpCloseHandle(req);
+    } else if (networkError) {
+      *networkError = true;
+    }
+    WinHttpCloseHandle(conn);
+  } else if (networkError) {
+    *networkError = true;
+  }
+  WinHttpCloseHandle(session);
+  return ok;
+}
+
+static std::wstring AltUrl(const std::wstring& url) {
+  const std::wstring raw = L"https://raw.githubusercontent.com/";
+  const std::wstring cdn = L"https://cdn.jsdelivr.net/gh/";
+  if (url.compare(0, raw.size(), raw) == 0) {
+    std::wstring rest = url.substr(raw.size());
+    size_t p1 = rest.find(L'/');
+    if (p1 == std::wstring::npos) return std::wstring();
+    size_t p2 = rest.find(L'/', p1 + 1);
+    if (p2 == std::wstring::npos) return std::wstring();
+    size_t p3 = rest.find(L'/', p2 + 1);
+    if (p3 == std::wstring::npos) return std::wstring();
+    return cdn + rest.substr(0, p2) + L"@" + rest.substr(p2 + 1, p3 - p2 - 1) + rest.substr(p3);
+  }
+  if (url.compare(0, cdn.size(), cdn) == 0) {
+    std::wstring rest = url.substr(cdn.size());
+    size_t at = rest.find(L'@');
+    if (at == std::wstring::npos) return std::wstring();
+    size_t p = rest.find(L'/', at);
+    if (p == std::wstring::npos) return std::wstring();
+    return raw + rest.substr(0, at) + L"/" + rest.substr(at + 1, p - at - 1) + rest.substr(p);
+  }
+  return std::wstring();
+}
+
+bool HttpGetText(const std::wstring& url, std::string& out, bool* networkError) {
+  if (networkError) *networkError = false;
+  std::vector<char> buf;
+  if (HttpGetRaw(url, buf, networkError)) {
+    out.assign(buf.begin(), buf.end());
+    return true;
+  }
+  std::wstring alt = AltUrl(url);
+  if (!alt.empty() && HttpGetRaw(alt, buf, nullptr)) {
+    out.assign(buf.begin(), buf.end());
+    return true;
+  }
+  return false;
+}
+
+bool HttpGetFile(const std::wstring& url, const std::wstring& dstPath) {
+  std::vector<char> buf;
+  if (!HttpGetRaw(url, buf, nullptr)) {
+    std::wstring alt = AltUrl(url);
+    if (alt.empty() || !HttpGetRaw(alt, buf, nullptr)) return false;
+  }
+  if (buf.empty()) return false;
+
+  std::wstring parent = dstPath;
+  size_t pos = parent.find_last_of(L"\\/");
+  if (pos != std::wstring::npos) EnsureDir(parent.substr(0, pos));
+
+  HANDLE h = CreateFileW(dstPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+                         FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return false;
+  DWORD written = 0;
+  bool ok = WriteFile(h, buf.data(), (DWORD)buf.size(), &written, nullptr) && written == buf.size();
+  CloseHandle(h);
+  return ok;
 }
 
 // ---------------------------------------------------------------- 时间

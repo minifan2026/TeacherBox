@@ -9,7 +9,13 @@
     status: {},   // id -> 'unknown' | 'ok' | 'miss'
     busy: {},     // id -> 'check' | 'install'
     filter: "",
-    toolsDir: ""
+    toolsDir: "",
+    view: "local",
+    market: [],
+    marketNote: "",
+    marketBusy: {},
+    marketLoaded: false,
+    marketLoading: false
   };
 
   var elGrid = document.getElementById("grid");
@@ -24,6 +30,12 @@
   var elModalTitle = document.getElementById("modal-title");
   var elModalSub = document.getElementById("modal-sub");
   var elModalBody = document.getElementById("modal-body");
+  var elViewLocal = document.getElementById("view-local");
+  var elViewMarket = document.getElementById("view-market");
+  var elMarketGrid = document.getElementById("market-grid");
+  var elMarketEmpty = document.getElementById("market-empty");
+  var elMarketError = document.getElementById("market-error");
+  var elMarketNote = document.getElementById("market-note");
 
   function send(payload) {
     if (bridge) bridge.postMessage(payload);
@@ -255,6 +267,110 @@
     elWarn.textContent = "已忽略 " + list.length + " 项：\n" + list.join("\n");
   }
 
+  // ------------------------------------------------------------ 工具市场
+  function renderMarketCard(item) {
+    var card = document.createElement("div");
+    card.className = "card";
+
+    var idEl = document.createElement("div");
+    idEl.className = "card-id";
+    idEl.textContent = item.id;
+    idEl.title = item.id;
+    card.appendChild(idEl);
+
+    var main = document.createElement("div");
+    main.className = "card-main";
+
+    var line = document.createElement("div");
+    line.className = "card-line";
+    var dot = document.createElement("span");
+    dot.className = "chip " + (item.installed ? "ok" : "");
+    line.appendChild(dot);
+    var title = document.createElement("h3");
+    title.className = "card-title";
+    title.textContent = item.name || item.id;
+    line.appendChild(title);
+    if (item.version) {
+      var ver = document.createElement("span");
+      ver.className = "card-ver";
+      ver.textContent = "v" + item.version;
+      line.appendChild(ver);
+    }
+    main.appendChild(line);
+
+    if (item.description) {
+      var desc = document.createElement("p");
+      desc.className = "card-desc";
+      desc.textContent = item.description;
+      main.appendChild(desc);
+    }
+    card.appendChild(main);
+
+    var side = document.createElement("div");
+    side.className = "card-side";
+    var acts = document.createElement("div");
+    acts.className = "card-actions";
+
+    var busy = !!state.marketBusy[item.id];
+    if (item.installed) {
+      var b = makeButton("装好了", "ghost", function () {});
+      b.disabled = true;
+      acts.appendChild(b);
+    } else {
+      var dl = makeButton(busy ? "下载中…" : "下载", "primary", function () {
+        log("下载 " + item.id);
+        state.marketBusy[item.id] = true;
+        renderMarket();
+        send({ cmd: "marketInstall", id: item.id });
+      });
+      dl.disabled = busy;
+      acts.appendChild(dl);
+    }
+    side.appendChild(acts);
+    card.appendChild(side);
+    return card;
+  }
+
+  function renderMarket() {
+    elMarketGrid.textContent = "";
+    state.market.forEach(function (m) { elMarketGrid.appendChild(renderMarketCard(m)); });
+    if (state.market.length === 0) {
+      elMarketEmpty.classList.remove("hidden");
+      elMarketEmpty.textContent = state.marketLoading ? "正在拉清单…" : "清单是空的。";
+    } else {
+      elMarketEmpty.classList.add("hidden");
+    }
+    elCounter.textContent = state.view === "market"
+      ? String(state.market.length)
+      : String(state.tools.length);
+  }
+
+  function showMarketError(text) {
+    state.marketNote = text || "";
+    if (!text) {
+      elMarketError.classList.add("hidden");
+      elMarketError.textContent = "";
+      return;
+    }
+    elMarketError.classList.remove("hidden");
+    elMarketError.textContent = text;
+  }
+
+  function setView(view) {
+    state.view = view === "market" ? "market" : "local";
+    elViewLocal.classList.toggle("hidden", state.view !== "local");
+    elViewMarket.classList.toggle("hidden", state.view !== "market");
+    document.getElementById("tab-local").classList.toggle("on", state.view === "local");
+    document.getElementById("tab-market").classList.toggle("on", state.view === "market");
+    elSearch.classList.toggle("hidden", state.view !== "local");
+    if (state.view === "market") {
+      renderMarket();
+      if (!state.marketLoaded) send({ cmd: "market" });
+    } else {
+      render();
+    }
+  }
+
   // ------------------------------------------------------------ 消息处理
   function handleMessage(data) {
     if (typeof data === "string") {
@@ -266,7 +382,42 @@
       case "tools":
         state.tools = data.items || [];
         render();
+        if (state.view === "market") renderMarket();
         showWarnings(data.warnings);
+        break;
+
+      case "market":
+        state.market = data.items || [];
+        state.marketLoading = false;
+        state.marketLoaded = !data.error;
+        state.marketBusy = {};
+        showMarketError(data.error || "");
+        renderMarket();
+        break;
+
+      case "marketLoading":
+        state.marketLoading = !!data.busy;
+        renderMarket();
+        break;
+
+      case "marketBusy":
+        if (data.busy) state.marketBusy[data.id] = true;
+        else delete state.marketBusy[data.id];
+        renderMarket();
+        break;
+
+      case "importStart":
+        log("开始安装 " + (data.source || ""));
+        break;
+
+      case "import":
+        log((data.ok ? "已安装工具 " : "安装失败 ") + (data.id || "") +
+            (data.message ? "（" + data.message + "）" : ""));
+        if (!data.ok && data.id) delete state.marketBusy[data.id];
+        if (data.ok) {
+          state.marketBusy = {};
+          if (state.view === "market") send({ cmd: "market" });
+        }
         break;
 
       case "busy":
@@ -337,6 +488,21 @@
 
   document.getElementById("btn-hide").addEventListener("click", function () {
     send({ cmd: "hide" });
+  });
+
+  document.getElementById("btn-import").addEventListener("click", function () {
+    send({ cmd: "importFile" });
+  });
+
+  document.getElementById("tab-local").addEventListener("click", function () { setView("local"); });
+  document.getElementById("tab-market").addEventListener("click", function () { setView("market"); });
+
+  document.getElementById("btn-market-refresh").addEventListener("click", function () {
+    state.marketLoading = true;
+    state.marketLoaded = false;
+    log("拉工具清单");
+    send({ cmd: "marketRefresh" });
+    renderMarket();
   });
 
   document.getElementById("btn-clear").addEventListener("click", function () {

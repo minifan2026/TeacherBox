@@ -1,0 +1,33 @@
+{
+  "version": "1",
+  "items": [
+    {
+      "id": "7zip",
+      "name": "7-Zip 解压",
+      "version": "26.06",
+      "description": "解压 zip/rar/7z，课件压缩包都靠它",
+      "url": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market/7zip.zip"
+    },
+    {
+      "id": "everything",
+      "name": "Everything 文件秒搜",
+      "version": "1.4.1",
+      "description": "全盘文件名秒搜，找课件比资源管理器快",
+      "url": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market/everything.zip"
+    },
+    {
+      "id": "sumatra",
+      "name": "SumatraPDF 阅读器",
+      "version": "3.6",
+      "description": "轻量 PDF 阅读器，翻页快、能记住上次位置",
+      "url": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market/sumatra.zip"
+    },
+    {
+      "id": "vscode",
+      "name": "VS Code 编辑器",
+      "version": "1.146",
+      "description": "改脚本、看代码、批量改文本",
+      "url": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market/vscode.zip"
+    }
+  ]
+}

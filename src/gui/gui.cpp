@@ -10,9 +10,11 @@
 #include <windows.h>
 #include <shellapi.h>
 #include <dwmapi.h>
+#include <commdlg.h>
 
 #include "webview2_compat.h"
 
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,9 +35,20 @@ const UINT     kTrayMessage = WM_APP + 200;
 const UINT     kPostJson    = WM_APP + 201;
 const UINT     kTrayId      = 1;
 
+// 工具市场清单：仓库根目录的 market.json，raw 与 jsDelivr 互相兜底
+const wchar_t* kMarketUrl = L"https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market.json";
+
 // IID_IUnknown（避免依赖 uuid.lib）
 const GUID kIID_Unknown = {0x00000000, 0x0000, 0x0000,
                            {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+
+struct MarketItem {
+  std::string id;
+  std::string name;
+  std::string version;
+  std::string description;
+  std::string url;
+};
 
 struct AppState {
   HWND   hwnd = nullptr;
@@ -54,8 +67,13 @@ struct AppState {
   std::wstring      toolsDir;
   std::vector<tb::ToolSpec> tools;
   std::vector<std::string>  warnings;
-  std::string       version = "1.0.0";
+  std::vector<MarketItem>   market;
+  bool                      marketLoaded  = false;
+  bool                      marketFetching = false;
+  std::string               version = "1.0.0";
 };
+
+std::mutex g_marketLock;
 
 AppState g;
 
@@ -132,6 +150,277 @@ void RescanTools() {
   tb::Log(L"gui", "[tools] 扫描到 " + std::to_string(g.tools.size()) + " 个工具，问题 " +
                       std::to_string(g.warnings.size()) + " 条");
 }
+
+// ------------------------------------------------------------------ 工具市场
+
+std::string SanitizeId(const std::string& raw) {
+  std::string s;
+  for (char ch : raw) {
+    unsigned char c = (unsigned char)ch;
+    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' ||
+        c == '_' || c == '-' || c == '+')
+      s += (char)c;
+    else if (c == ' ')
+      s += '-';
+  }
+  while (!s.empty() && s[0] == '.') s.erase(0, 1);
+  if (s.size() > 48) s.resize(48);
+  return s;
+}
+
+std::string MarketJson(const std::string& error) {
+  std::string s = "{\"type\":\"market\"";
+  if (!error.empty()) s += ",\"error\":" + tb::Json::Quote(error);
+  s += ",\"items\":[";
+  std::lock_guard<std::mutex> lock(g_marketLock);
+  for (size_t i = 0; i < g.market.size(); ++i) {
+    const MarketItem& m = g.market[i];
+    if (i) s += ",";
+    s += "{\"id\":" + tb::Json::Quote(m.id);
+    s += ",\"name\":" + tb::Json::Quote(m.name);
+    s += ",\"version\":" + tb::Json::Quote(m.version);
+    s += ",\"description\":" + tb::Json::Quote(m.description);
+    s += ",\"url\":" + tb::Json::Quote(m.url);
+    s += ",\"installed\":";
+    s += tb::DirExists(tb::JoinPath(g.toolsDir, tb::ToWide(m.id))) ? "true" : "false";
+    s += "}";
+  }
+  s += "]}";
+  return s;
+}
+
+void FetchMarketAsync() {
+  if (g.marketFetching) return;
+  g.marketFetching = true;
+  PostJson("{\"type\":\"marketLoading\",\"busy\":true}");
+
+  std::thread([]() {
+    std::string text;
+    bool netErr = false;
+    std::string error;
+    std::vector<MarketItem> items;
+
+    if (!tb::HttpGetText(kMarketUrl, text, &netErr)) {
+      error = netErr ? "连不上 GitHub，先打开 Watt Toolkit 里的 GitHub 加速再试"
+                     : "清单地址返回异常";
+    } else {
+      std::string err;
+      tb::Json doc = tb::Json::Parse(text, &err);
+      if (!err.empty() || !doc.IsObject()) {
+        error = "market.json 解析失败";
+      } else {
+        const tb::Json* arr = doc.Find("items");
+        if (arr && arr->IsArray()) {
+          for (const tb::Json& one : arr->items) {
+            if (!one.IsObject()) continue;
+            MarketItem m;
+            m.id = one.GetString("id", "");
+            m.name = one.GetString("name", m.id);
+            m.version = one.GetString("version", "");
+            m.description = one.GetString("description", one.GetString("desc", ""));
+            m.url = one.GetString("url", one.GetString("package", ""));
+            if (!tb::IsValidToolId(m.id) || m.url.empty()) continue;
+            items.push_back(m);
+          }
+        }
+        if (items.empty()) error = "清单里没有可用工具";
+      }
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(g_marketLock);
+      g.market = items;
+    }
+    g.marketLoaded = !error.empty() ? false : true;
+    g.marketFetching = false;
+    tb::Log(L"gui", "[market] 清单 " + std::to_string(items.size()) + " 项" +
+                        (error.empty() ? "" : "，错误：" + error));
+    PostJson(MarketJson(error));
+    PostJson("{\"type\":\"marketLoading\",\"busy\":false}");
+  }).detach();
+}
+
+// ---- 安装（zip 展开 / 目录复制共用）
+
+bool ExtractZip(const std::wstring& zip, const std::wstring& dst) {
+  tb::EnsureDir(dst);
+  auto esc = [](const std::wstring& s) {
+    std::wstring r;
+    for (wchar_t c : s) { if (c == L'\'') r += L"''"; r += c; }
+    return r;
+  };
+  std::wstring ps = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command " +
+                    std::wstring(L"\"Expand-Archive -LiteralPath '") + esc(zip) +
+                    L"' -DestinationPath '" + esc(dst) + L"' -Force\"";
+  tb::RunResult r = tb::RunCommand(ps, 120000, L"");
+  if (r.started && r.exitCode == 0) return true;
+
+  // 兜底：Win10 自带的 tar（bsdtar 能直接解 zip）
+  std::wstring tar = L"tar.exe -xf \"" + zip + L"\" -C \"" + dst + L"\"";
+  tb::RunResult r2 = tb::RunCommand(tar, 120000, L"");
+  return r2.started && r2.exitCode == 0;
+}
+
+// 工具包可能把 tool.json 放在根，也可能外面还套一层目录
+std::wstring FindToolRoot(const std::wstring& dir) {
+  if (tb::FileExists(tb::JoinPath(dir, L"tool.json"))) return dir;
+  for (const std::wstring& sub : tb::ListDirs(dir)) {
+    std::wstring p = tb::JoinPath(dir, sub);
+    if (tb::FileExists(tb::JoinPath(p, L"tool.json"))) return p;
+  }
+  return std::wstring();
+}
+
+bool InstallPackage(const std::wstring& srcRoot, const std::string& preferId, std::string& outId,
+                    std::string& error) {
+  if (srcRoot.empty() || !tb::FileExists(tb::JoinPath(srcRoot, L"tool.json"))) {
+    error = "包里没有 tool.json，不是工具包";
+    return false;
+  }
+  std::wstring base = tb::ToWide(preferId);
+  if (base.empty()) {
+    size_t pos = srcRoot.find_last_of(L"\\/");
+    base = (pos == std::wstring::npos) ? srcRoot : srcRoot.substr(pos + 1);
+  }
+  std::string id = SanitizeId(tb::ToUtf8(base));
+  if (!tb::IsValidToolId(id)) {
+    error = "工具 id 不合规（只允许字母、数字和 . _ - +）";
+    return false;
+  }
+
+  std::wstring target = tb::JoinPath(g.toolsDir, tb::ToWide(id));
+  if (tb::DirExists(target)) tb::DeleteTree(target);
+  if (!tb::CopyTree(srcRoot, target)) {
+    error = "写入 tools/" + id + " 失败，可能有文件被占用";
+    return false;
+  }
+  outId = id;
+  return true;
+}
+
+void PostImportResult(bool ok, const std::string& id, const std::string& message) {
+  std::string json = "{\"type\":\"import\",\"ok\":";
+  json += ok ? "true" : "false";
+  json += ",\"id\":" + tb::Json::Quote(id);
+  json += ",\"message\":" + tb::Json::Quote(message) + "}";
+  PostJson(json);
+  if (ok) {
+    RescanTools();
+    PostJson(ToolsJson());
+    PostJson(MarketJson(""));
+  }
+}
+
+void ImportZipAsync(const std::wstring& zipPath, const std::string& preferId) {
+  tb::Log(L"gui", "[import] zip： " + tb::ToUtf8(zipPath));
+  PostJson("{\"type\":\"importStart\",\"source\":" + tb::Json::Quote(tb::ToUtf8(zipPath)) + "}");
+
+  std::thread([zipPath, preferId]() {
+    std::wstring temp = tb::JoinPath(tb::TempDir(),
+                                     L"tb-import-" + tb::ToWide(tb::NowStampForFile()));
+    std::string error;
+    std::string id;
+
+    if (!ExtractZip(zipPath, temp)) {
+      error = "解压失败（zip 可能损坏或被占用）";
+    } else {
+      std::wstring root = FindToolRoot(temp);
+      if (!InstallPackage(root, preferId, id, error)) {
+        // 错误信息已经在 error 里
+      }
+    }
+    tb::DeleteTree(temp);
+
+    if (error.empty()) {
+      tb::Log(L"gui", "[import] 已安装工具 " + id);
+      PostImportResult(true, id, "已安装 " + id);
+    } else {
+      tb::Log(L"gui", "[import] 失败：" + error);
+      PostImportResult(false, id, error);
+    }
+    PostJson("{\"type\":\"importEnd\"}");
+  }).detach();
+}
+
+void ImportDirAsync(const std::wstring& dirPath) {
+  tb::Log(L"gui", "[import] 目录： " + tb::ToUtf8(dirPath));
+  PostJson("{\"type\":\"importStart\",\"source\":" + tb::Json::Quote(tb::ToUtf8(dirPath)) + "}");
+
+  std::thread([dirPath]() {
+    std::wstring root = FindToolRoot(dirPath);
+    std::string error, id;
+    if (!InstallPackage(root, "", id, error)) {
+      PostImportResult(false, id, error);
+    } else {
+      PostImportResult(true, id, "已安装 " + id);
+    }
+    PostJson("{\"type\":\"importEnd\"}");
+  }).detach();
+}
+
+void ImportMarketItem(const std::string& id) {
+  MarketItem item;
+  {
+    std::lock_guard<std::mutex> lock(g_marketLock);
+    bool found = false;
+    for (const MarketItem& m : g.market)
+      if (m.id == id) { item = m; found = true; break; }
+    if (!found) {
+      PostImportResult(false, id, "清单里没有这个工具，先刷新一下");
+      return;
+    }
+  }
+  std::wstring zip = tb::JoinPath(tb::TempDir(), L"tb-market-" + tb::ToWide(SanitizeId(id)) + L".zip");
+  PostJson("{\"type\":\"marketBusy\",\"id\":" + tb::Json::Quote(id) + ",\"busy\":true}");
+
+  std::thread([id, url = item.url, zip]() {
+    if (!tb::HttpGetFile(tb::ToWide(url), zip)) {
+      PostJson("{\"type\":\"marketBusy\",\"id\":" + tb::Json::Quote(id) + ",\"busy\":false}");
+      PostImportResult(false, id, "下载失败，检查网络或 GitHub 加速");
+      return;
+    }
+    PostJson("{\"type\":\"marketBusy\",\"id\":" + tb::Json::Quote(id) + ",\"busy\":false}");
+    ImportZipAsync(zip, id);
+  }).detach();
+}
+
+// 选择本地 zip 安装（“上传”按钮）
+void ImportFromDialog() {
+  wchar_t path[MAX_PATH * 2] = {0};
+  OPENFILENAMEW ofn{};
+  ofn.hwndOwner = g.hwnd;
+  ofn.lStructSize = sizeof(ofn);
+  ofn.lpstrFilter = L"工具包 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0";
+  ofn.lpstrFile = path;
+  ofn.nMaxFile = MAX_PATH * 2;
+  ofn.lpstrTitle = L"选择工具包";
+  ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+  if (!GetOpenFileNameW(&ofn)) return;
+  ImportZipAsync(path, "");
+}
+
+// 拖进窗口：zip 解压安装，目录直接安装
+void HandleDroppedFiles(HDROP drop) {
+  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  for (UINT i = 0; i < count; ++i) {
+    wchar_t path[MAX_PATH * 2] = {0};
+    if (DragQueryFileW(drop, i, path, MAX_PATH * 2) == 0) continue;
+    std::wstring p = path;
+    if (tb::DirExists(p)) {
+      ImportDirAsync(p);
+    } else {
+      size_t dot = p.find_last_of(L'.');
+      std::wstring ext = (dot == std::wstring::npos) ? L"" : p.substr(dot);
+      if (_wcsicmp(ext.c_str(), L".zip") == 0) {
+        ImportZipAsync(p, "");
+      } else {
+        PostImportResult(false, "", "只认 .zip 工具包或工具目录");
+      }
+    }
+  }
+  DragFinish(drop);
+}
+
 
 // ------------------------------------------------------------------ 终止
 
@@ -288,6 +577,16 @@ void HandleMessage(const std::string& text) {
     RunHelp(id);
   } else if (cmd == "action") {
     RunAction(id, (int)msg.GetNumber("index", 0));
+  } else if (cmd == "market") {
+    if (g.marketLoaded) PostJson(MarketJson(""));
+    else FetchMarketAsync();
+  } else if (cmd == "marketRefresh") {
+    g.marketLoaded = false;
+    FetchMarketAsync();
+  } else if (cmd == "marketInstall") {
+    ImportMarketItem(id);
+  } else if (cmd == "importFile") {
+    ImportFromDialog();
   } else if (cmd == "openFolder") {
     std::string which = msg.GetString("target", "tools");
     std::wstring dir = (which == "logs") ? tb::LogDir() : g.toolsDir;
@@ -387,6 +686,15 @@ public:
     GetClientRect(g.hwnd, &rc);
     controller->put_Bounds(rc);
     controller->put_IsVisible(TRUE);
+
+    // WebView2 默认自己吃掉文件拖放，关掉它，让外层窗口收 WM_DROPFILES
+    ICoreWebView2Controller4* c4 = nullptr;
+    if (SUCCEEDED(controller->QueryInterface(kIID_ICoreWebView2Controller4,
+                                             reinterpret_cast<void**>(&c4))) &&
+        c4) {
+      c4->put_AllowExternalDrop(FALSE);
+      c4->Release();
+    }
 
     ICoreWebView2Settings* settings = nullptr;
     if (SUCCEEDED(webview->get_Settings(&settings)) && settings) {
@@ -553,6 +861,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
   switch (msg) {
     case WM_CREATE:
       g.hwnd = hwnd;
+      DragAcceptFiles(hwnd, TRUE);
+      return 0;
+
+    case WM_DROPFILES:
+      HandleDroppedFiles(reinterpret_cast<HDROP>(wp));
       return 0;
 
     case WM_SIZE:

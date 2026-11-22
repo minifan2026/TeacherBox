@@ -109,6 +109,40 @@ h1 {
 
 .link:hover { color: var(--ink); }
 
+/* -------------------------------------------------------------- 页签 */
+
+.tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 34px;
+  padding: 0 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  font: 12px/1 var(--sans);
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 7px 0 8px;
+  cursor: pointer;
+}
+
+.tab:hover { color: var(--ink-2); }
+.tab.on { color: var(--ink); border-bottom-color: var(--red); }
+.tabs .count { margin-left: auto; }
+
+.hint {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
 /* -------------------------------------------------------------- 主区 */
 
 .content {

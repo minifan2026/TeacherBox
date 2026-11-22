@@ -10,23 +10,40 @@
   <header class="bar">
     <div class="logo">T</div>
     <h1>TeacherBox</h1>
-    <span class="ver" id="version">v1.0.0</span>
+    <span class="ver" id="version">v1.1.3</span>
     <div class="acts">
       <button class="btn" id="btn-folder">目录</button>
+      <button class="btn" id="btn-import">导入</button>
       <button class="btn" id="btn-refresh">刷新</button>
       <button class="btn" id="btn-hide">托盘</button>
     </div>
   </header>
 
+  <div class="tabs">
+    <button class="tab on" id="tab-local" data-view="local">本机工具</button>
+    <button class="tab" id="tab-market" data-view="market">工具市场</button>
+    <span class="count" id="counter">0</span>
+  </div>
+
   <main class="content">
-    <div class="searchbar">
-      <input id="search" type="text" placeholder="过滤" spellcheck="false" />
-      <span class="count" id="counter">0</span>
+    <div id="view-local">
+      <div class="searchbar">
+        <input id="search" type="text" placeholder="过滤" spellcheck="false" />
+      </div>
+      <div id="warnings" class="warn hidden"></div>
+      <div id="grid" class="grid"></div>
+      <div id="empty" class="empty hidden">还没有工具。到「工具市场」下几个，或者把 zip 拖进窗口。</div>
     </div>
 
-    <div id="warnings" class="warn hidden"></div>
-    <div id="grid" class="grid"></div>
-    <div id="empty" class="empty hidden">tools 目录是空的。</div>
+    <div id="view-market" class="hidden">
+      <div class="searchbar">
+        <span class="hint" id="market-note">清单来自 GitHub，拉不动就开 Watt Toolkit 里的加速</span>
+        <button class="link" id="btn-market-refresh">重新拉清单</button>
+      </div>
+      <div id="market-error" class="warn hidden"></div>
+      <div id="market-grid" class="grid"></div>
+      <div id="market-empty" class="empty hidden">清单是空的。</div>
+    </div>
   </main>
 
   <section class="console hidden">
@@ -50,4 +67,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-

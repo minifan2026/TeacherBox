@@ -1,0 +1,8 @@
+{
+  "name": "7-Zip 解压",
+  "version": "26.06",
+  "description": "解压 zip/rar/7z，课件压缩包都靠它",
+  "check": { "command": "if exist \"%ProgramFiles%\\7-Zip\\7z.exe\" (echo ok)", "timeout": 20 },
+  "install": { "command": "winget install --id 7zip.7zip -e --accept-package-agreements --accept-source-agreements --disable-interactivity", "timeout": 1200 },
+  "actions": [ { "label": "打开", "command": "\"C:\\Program Files\\7-Zip\\7zFM.exe\"" } ]
+}

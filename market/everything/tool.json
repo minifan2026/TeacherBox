@@ -1,0 +1,8 @@
+{
+  "name": "Everything 文件秒搜",
+  "version": "1.4.1",
+  "description": "全盘文件名秒搜，找课件比资源管理器快",
+  "check": { "command": "if exist \"%ProgramFiles%\\Everything\\Everything.exe\" (echo ok)", "timeout": 20 },
+  "install": { "command": "winget install --id voidtools.Everything -e --accept-package-agreements --accept-source-agreements --disable-interactivity", "timeout": 900 },
+  "actions": [ { "label": "打开", "command": "\"%ProgramFiles%\\Everything\\Everything.exe\"" } ]
+}
