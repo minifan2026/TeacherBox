@@ -112,6 +112,34 @@ cd C:\Users\Administrator\Desktop\项目\TeacherBox
 
 WebView2 官方头文件里的接口没有 `IID_XXX` 导出符号，MSVC 可以靠 `__uuidof`，GCC 不行。本工程的做法是：`scripts/gen_iids.ps1` 从 `WebView2.h` 里抽出所有 `MIDL_INTERFACE("guid")`，生成 `src/gui/webview2_iids.h`，代码统一用 `kIID_XXX` 常量。因此 GCC 也能编。
 
+### 图标与签名
+
+- 图标资源：`resources/app.ico`，由 `scripts/make_icon.ps1` 生成（朱红圆角底 + 米白衬线 T，9 帧 16~256）。`app.rc` 以 `101 ICON` 嵌进三个 exe，`gui.exe` 建窗口时用 `LoadImageW(101)` 取同一枚图标，所以资源管理器、任务栏、托盘看到的是同一个，用户在文件夹里不会认不出 `main.exe`
+- 改图标后要重新跑 `pwsh -File scripts\make_icon.ps1`，再 `.\build.ps1`
+
+签名：
+
+```powershell
+.\build.ps1
+pwsh -File .\scripts\sign.ps1        # 没证书会先自签一张，然后签 dist\*.exe
+```
+
+`sign.ps1` 用 `CN=TeacherBox Development` 的自签证书签三个 exe，pfx/cer 导到 `certs\`（不进 git）。签名后 `Get-AuthenticodeSignature` 能看到签名者，但状态是 `UnknownError`——自签证书没进系统信任链，装的人照样会看到"未知发布者"。
+
+真正的解法是买 OV/EV 代码签名证书（一年几百到几千元，EV 还能立刻过 SmartScreen 积累的信誉）。用自签证书时，给别人装可以：
+
+1. 把 `certs\TeacherBox.cer` 一起发过去
+2. 双击 → 安装证书 → 当前用户 → 放入「受信任的发布者」
+3. 之后这批 exe 就是"已验证的发布者"，不再弹未知发布者
+
+注意每次 `build.ps1` 都会重新生成 exe，签名要在装配之后再跑一遍，顺序不能反。
+
+### CI
+
+`.github/workflows/cmake-multi-platform.yml`：push/PR 到 `main` 或手动触发，在 `windows-2022` 镜像上用 MSVC 构建，产物是 `TeacherBox-<版本>-win64.zip` + `dist/`，挂在 Actions 的 Artifacts 里。
+
+镜像固定在 `windows-2022` 是因为 `windows-latest` 已经换成 `windows-2025-vs2026`（只有 VS2026），`-G "Visual Studio 17 2022"` 在那上面找不到实例。
+
 ## 运行
 
 直接双击 `dist\main.exe`：

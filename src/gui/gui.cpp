@@ -28,6 +28,7 @@ namespace {
 const wchar_t* kWindowClass = L"TeacherBoxGuiWindow";
 const wchar_t* kWindowTitle = L"TeacherBox";
 const wchar_t* kVhost       = L"teacherbox.local";
+const int      kIconId      = 101;   // resources/app.rc 里的 ICON 资源号
 const UINT     kTrayMessage = WM_APP + 200;
 const UINT     kPostJson    = WM_APP + 201;
 const UINT     kTrayId      = 1;
@@ -672,7 +673,13 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
 
   RescanTools();
 
-  g.icon = tb::MakeAppIcon(32);
+  // 用嵌在 exe 里的图标（resources/app.ico），资源管理器、任务栏、托盘看到的是同一个，
+  // 老 exe 没这个资源时才退回运行时画的那个
+  HICON icoBig = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(kIconId), IMAGE_ICON,
+                                   GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CXICON), LR_SHARED);
+  HICON icoSmall = (HICON)LoadImageW(hinst, MAKEINTRESOURCEW(kIconId), IMAGE_ICON,
+                                     GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CXSMICON), LR_SHARED);
+  g.icon = icoBig ? icoBig : tb::MakeAppIcon(32);
 
   WNDCLASSEXW wc{};
   wc.cbSize = sizeof(wc);
@@ -702,7 +709,7 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
 
   if (g.icon) {
     SendMessageW(hwnd, WM_SETICON, ICON_BIG, (LPARAM)g.icon);
-    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)g.icon);
+    SendMessageW(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)(icoSmall ? icoSmall : g.icon));
   }
 
   // 标题栏跟随浅色界面（系统默认可能按深色主题画成黑条）

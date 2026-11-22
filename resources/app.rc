@@ -1,10 +1,11 @@
 // TeacherBox 共用资源：版本信息 + 清单（main/update/gui 三个 exe 都挂这份）
 #pragma code_page(65001)
 1 24 "app.manifest"
+101 ICON "app.ico"
 
 1 VERSIONINFO
- FILEVERSION     1,1,0,0
- PRODUCTVERSION  1,1,0,0
+ FILEVERSION     1,1,1,0
+ PRODUCTVERSION  1,1,1,0
  FILEFLAGSMASK   0x3fL
  FILEFLAGS       0x0L
  FILEOS          0x40004L
@@ -17,12 +18,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "TeacherBox"
             VALUE "FileDescription",  "TeacherBox 教师工具箱"
-            VALUE "FileVersion",      "1.1.0.0"
+            VALUE "FileVersion",      "1.1.1.0"
             VALUE "InternalName",     "TeacherBox"
             VALUE "LegalCopyright",   "TeacherBox"
             VALUE "OriginalFilename", "TeacherBox.exe"
             VALUE "ProductName",      "TeacherBox 教师工具箱"
-            VALUE "ProductVersion",   "1.1.0.0"
+            VALUE "ProductVersion",   "1.1.1.0"
             VALUE "Comments",         "TeacherBox teacher toolbox"
         END
     END

@@ -313,9 +313,23 @@ bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workDir
   std::wstring cmd = commandLine;
   BOOL ok = CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
                            workDir.empty() ? nullptr : workDir.c_str(), &si, &pi);
-  if (!ok) return false;
-  CloseHandle(pi.hThread);
-  CloseHandle(pi.hProcess);
+  if (ok) {
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+  }
+
+  // CreateProcess 只认可执行文件，ms-settings: 这类 shell 协议、开始菜单里的快捷方式对它都是
+  // "找不到文件"。这类走 ShellExecute，顺带把 UAC 提升也交给 shell 处理。
+  SHELLEXECUTEINFOW sei{};
+  sei.cbSize = sizeof(sei);
+  sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_FLAG_NO_UI;
+  sei.lpVerb = L"open";
+  sei.lpFile = commandLine.c_str();
+  sei.lpDirectory = workDir.empty() ? nullptr : workDir.c_str();
+  sei.nShow = SW_SHOWNORMAL;
+  if (!ShellExecuteExW(&sei)) return false;
+  if (sei.hProcess) CloseHandle(sei.hProcess);
   return true;
 }
 

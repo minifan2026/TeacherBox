@@ -9,6 +9,7 @@ out/
 # 发布包（构建产物，只往 GitHub Releases 上传，不进仓库）
 *.zip
 /release/
+/certs/
 
 # IDE / 编辑器
 .vs/

@@ -94,6 +94,9 @@ if (-not (Test-Path (Join-Path $distDir "WebView2Loader.dll"))) {
 Copy-Item -LiteralPath (Join-Path $root "web") -Destination $distDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root "tools") -Destination $distDir -Recurse
 Copy-Item -LiteralPath (Join-Path $root "update.json") -Destination $distDir
+# 自签证书的公开部分一起发出去，装机的人双击导入「受信任的发布者」就不会再提示未知发布者
+$cer = Join-Path $root "certs\TeacherBox.cer"
+if (Test-Path $cer) { Copy-Item -LiteralPath $cer -Destination $distDir }
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $distDir -ErrorAction SilentlyContinue
 
 Write-Host ""
