@@ -1,0 +1,59 @@
+# Windows 上的多配置构建。
+# 名字沿用 GitHub 生成的 cmake-multi-platform，实际只跑 Windows：
+# main/update/gui 三个目标都是 WIN32 子系统，还要链 WebView2 和 dwmapi，Linux/macOS 编不出来。
+name: CMake Multi-Platform
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Windows / MSVC / ${{ matrix.build_type }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest ]
+        build_type: [ Release ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # WebView2 SDK 是从 NuGet 现下的，缓存一下省得每次几百兆
+      - name: Cache WebView2 SDK
+        uses: actions/cache@v4
+        with:
+          path: _deps/webview2
+          key: webview2-1.0.2903.40-${{ runner.os }}
+
+      - name: Show toolchain
+        shell: pwsh
+        run: |
+          cmake --version
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property displayName
+
+      - name: Configure and build
+        shell: pwsh
+        run: .\build.ps1 -Config ${{ matrix.build_type }}
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $ver = (Get-Content update.json -Raw | ConvertFrom-Json).version
+          $name = "TeacherBox-$ver-win64.zip"
+          Compress-Archive -Path "dist\*" -DestinationPath $name -Force
+          Get-Item $name | Select-Object Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeacherBox-${{ matrix.build_type }}-win64
+          path: |
+            TeacherBox-*.zip
+            dist/
+          if-no-files-found: error
