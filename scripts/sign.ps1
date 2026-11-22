@@ -8,7 +8,7 @@
 
 param(
   [switch]$NewCert,
-  [string]$Subject = "CN=TeacherBox Development, O=minifan2026"
+  [string]$Subject = "CN=minifan, O=minifan"
 )
 
 $ErrorActionPreference = 'Stop'
