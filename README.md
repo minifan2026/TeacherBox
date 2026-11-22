@@ -262,3 +262,22 @@ pwsh -File .\scripts\smoke-crash.ps1 -Rounds 10    # 连崩 10 次 -> 弹「致�
 4. 等 1–2 分钟，访问 `https://<用户名>.github.io`
 
 也可以给别的仓库开 Pages（Settings → Pages 里任选分支/目录），只是没有那个好记的域名。`<用户名>.github.io` 一个账号只能有一个。
+
+## 1.1.4 工具市场改成分页
+
+清单不再是一个大 `market.json`，而是 GitHub Pages 上的静态站 `https://minifan2026.github.io/TeacherBoxWeb`：
+
+```
+api/page-0.json     前 50 条
+api/page-50.json    第 51-100 条
+api/meta.json       total / page_size / updated
+tools/<id>.zip      每个工具一个包，点下载才拉
+```
+
+客户端（`src/gui/gui.cpp`）按 `offset` 取页，点「加载更多」再取下一页，取过的页留在内存里不重复请求；列表只渲染名称 / 版本 / 作者 / 体积，卡片里才显示简介。条目带 `dev: true` 时挂「开发者」角标。
+
+GitHub Pages 是纯静态，`?offset=50` 这种查询串服务端拿不到，所以落成 `page-<offset>.json`；以后有真后端就换成 `GET /api/list?offset=<n>&limit=50`，客户端只改一行拼地址。
+
+页拉不动会回落到仓库里的 `market.json`（老地址），所以没网 / 没 Pages 也不会空着。
+
+站点仓库：`https://github.com/minifan2026/TeacherBoxWeb`（`tools-index.json` 是唯一真相，`scripts\build-api.ps1` 生成分页文件）。
