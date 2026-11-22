@@ -1,0 +1,9 @@
+# 统一换行，避免 Windows 上反复出现 CRLF 改动
+* text=auto eol=lf
+
+# 二进制/资源保持原样
+*.exe   binary
+*.dll   binary
+*.zip   binary
+*.png   binary
+*.ico   binary

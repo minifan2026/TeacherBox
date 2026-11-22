@@ -1,0 +1,23 @@
+# 构建产物
+/build/
+/dist/
+out/
+
+# 依赖（WebView2 SDK 由 scripts/fetch_webview2.ps1 现场下载）
+/_deps/
+
+# 发布包
+*.zip
+
+# IDE / 编辑器
+.vs/
+.vscode/
+*.user
+*.suo
+
+# 系统与临时文件
+Thumbs.db
+desktop.ini
+*.log
+*.tmp
+*.old

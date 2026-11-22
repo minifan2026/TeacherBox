@@ -1,0 +1,18 @@
+{
+  "name": "Python 运行时",
+  "version": "3.12",
+  "description": "教学脚本、作业批改、数据分析都靠它。检测方式是执行 python --version：退出码为 0 且标准输出不为空，才算环境就绪。",
+  "check": {
+    "command": "python --version",
+    "timeout": 20
+  },
+  "install": {
+    "command": "winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements",
+    "timeout": 1200
+  },
+  "actions": [
+    { "label": "打开 IDLE", "command": "python -m idlelib" },
+    { "label": "打开交互式解释器", "command": "python.exe" }
+  ],
+  "help": "help.md"
+}

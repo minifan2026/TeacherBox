@@ -1,0 +1,17 @@
+{
+  "name": "Git 版本管理",
+  "version": "2.4x",
+  "description": "课件、讲义、教案的版本管理。检测 git --version 是否有输出；没有就通过 winget 安装。",
+  "check": {
+    "command": "git --version",
+    "timeout": 20
+  },
+  "install": {
+    "command": "winget install -e --id Git.Git --accept-source-agreements --accept-package-agreements",
+    "timeout": 1200
+  },
+  "actions": [
+    { "label": "打开 Git Bash", "command": "git-bash.exe" }
+  ],
+  "help": "help.md"
+}

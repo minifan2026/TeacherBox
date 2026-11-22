@@ -1,0 +1,12 @@
+{
+  "name": "Windows 系统小工具",
+  "version": "1.0",
+  "description": "演示「工具目录放一个 exe / 命令，界面点一下就打开」：直接唤起系统自带的图形程序。",
+  "actions": [
+    { "label": "资源管理器", "command": "explorer.exe" },
+    { "label": "记事本", "command": "notepad.exe" },
+    { "label": "任务管理器", "command": "taskmgr.exe" },
+    { "label": "系统设置", "command": "ms-settings:" }
+  ],
+  "help": "help.md"
+}
