@@ -1,0 +1,10 @@
+{
+  "name": "C 盘清理",
+  "description": "临时文件、更新缓存、回收站",
+  "actions": [
+    { "label": "扫描", "command": "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File clean.ps1 -Mode scan" },
+    { "label": "清理", "command": "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File clean.ps1 -Mode clean" },
+    { "label": "每周日", "command": "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File clean.ps1 -Mode schedule" }
+  ],
+  "help": "help.md"
+}
