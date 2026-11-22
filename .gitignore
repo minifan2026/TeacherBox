@@ -6,8 +6,9 @@ out/
 # 依赖（WebView2 SDK 由 scripts/fetch_webview2.ps1 现场下载）
 /_deps/
 
-# 发布包
+# 发布包（release/ 里的更新包要跟着仓库走，单独放行）
 *.zip
+!release/*.zip
 
 # IDE / 编辑器
 .vs/

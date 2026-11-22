@@ -105,9 +105,52 @@ bool HttpGet(const std::wstring& url, std::string& out, bool* networkError = nul
   return ok;
 }
 
+// 国内访问 raw.githubusercontent.com 经常抽风，这里给它和 jsDelivr 之间互相兜底，
+// 两个地址指向的都是仓库里同一份文件。
+std::wstring AltUrl(const std::wstring& url) {
+  const std::wstring rawPrefix = L"https://raw.githubusercontent.com/";
+  const std::wstring cdnPrefix = L"https://cdn.jsdelivr.net/gh/";
+
+  if (url.compare(0, rawPrefix.size(), rawPrefix) == 0) {
+    // owner/repo/branch/rest -> gh/owner/repo@branch/rest
+    std::wstring rest = url.substr(rawPrefix.size());
+    size_t p1 = rest.find(L'/');
+    if (p1 == std::wstring::npos) return L"";
+    size_t p2 = rest.find(L'/', p1 + 1);
+    if (p2 == std::wstring::npos) return L"";
+    size_t p3 = rest.find(L'/', p2 + 1);
+    if (p3 == std::wstring::npos) return L"";
+    return cdnPrefix + rest.substr(0, p2) + L"@" + rest.substr(p2 + 1, p3 - p2 - 1) +
+           rest.substr(p3);
+  }
+
+  if (url.compare(0, cdnPrefix.size(), cdnPrefix) == 0) {
+    // gh/owner/repo@branch/rest -> owner/repo/branch/rest
+    std::wstring rest = url.substr(cdnPrefix.size());
+    size_t at = rest.find(L'@');
+    if (at == std::wstring::npos) return L"";
+    size_t p = rest.find(L'/', at);
+    if (p == std::wstring::npos) return L"";
+    return rawPrefix + rest.substr(0, at) + L"/" + rest.substr(at + 1, p - at - 1) +
+           rest.substr(p);
+  }
+
+  return L"";
+}
+
+bool FetchText(const std::wstring& url, std::string& out, bool* networkError = nullptr) {
+  if (HttpGet(url, out, networkError)) return true;
+  std::wstring alt = AltUrl(url);
+  if (!alt.empty()) {
+    out.clear();
+    if (HttpGet(alt, out, nullptr)) return true;
+  }
+  return false;
+}
+
 bool HttpDownload(const std::wstring& url, const std::wstring& dstPath) {
   std::string data;
-  if (!HttpGet(url, data)) return false;
+  if (!FetchText(url, data)) return false;
   PostProgress(70);
   return tb::WriteFileUtf8(dstPath, data);
 }
@@ -239,7 +282,7 @@ void DoUpdate() {
 
   std::string manifestText;
   bool netErr = false;
-  if (!HttpGet(tb::ToWide(remote), manifestText, &netErr)) {
+  if (!FetchText(tb::ToWide(remote), manifestText, &netErr)) {
     PostStatus(netErr ? L"网络不可用，跳过本次更新，继续启动" : L"获取更新信息失败，跳过本次更新");
     PostProgress(100);
     Sleep(900);
