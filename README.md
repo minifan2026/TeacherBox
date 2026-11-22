@@ -124,7 +124,7 @@ WebView2 官方头文件里的接口没有 `IID_XXX` 导出符号，MSVC 可以�
 pwsh -File .\scripts\sign.ps1        # 没证书会先自签一张，然后签 dist\*.exe
 ```
 
-`sign.ps1` 用 `CN=TeacherBox Development` 的自签证书签三个 exe，pfx/cer 导到 `certs\`（不进 git）。签名后 `Get-AuthenticodeSignature` 能看到签名者，但状态是 `UnknownError`——自签证书没进系统信任链，装的人照样会看到"未知发布者"。
+`sign.ps1` 用 `CN=minifan` 的自签证书签三个 exe，pfx/cer 导到 `certs\`（不进 git）。签名后 `Get-AuthenticodeSignature` 能看到签名者，但状态是 `UnknownError`——自签证书没进系统信任链，装的人照样会看到"未知发布者"。
 
 真正的解法是买 OV/EV 代码签名证书（一年几百到几千元，EV 还能立刻过 SmartScreen 积累的信誉）。用自签证书时，给别人装可以：
 
