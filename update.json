@@ -1,5 +1,5 @@
 {
   "version": "1.1.0",
-  "remote": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/release/update.json",
+  "remote": "https://github.com/minifan2026/TeacherBox/releases/latest/download/update.json",
   "package": ""
 }

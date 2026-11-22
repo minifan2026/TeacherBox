@@ -18,7 +18,7 @@ TeacherBox/
 ├─ tools/              工具包目录，一个子目录 = 一个工具
 ├─ update.json         版本与更新源配置
 ├─ resources/          版本信息 + 应用程序清单（app.rc / app.manifest）
-├─ release/            已发布版本的更新包与清单（update.exe 从这里取新版）
+├─ release/            打包暂存（zip + manifest，上传到 GitHub Releases，不进 git）
 ├─ scripts/            WebView2 拉取、IID 生成、崩溃冒烟测试
 └─ logs/               运行日志（实际写在 %LOCALAPPDATA%\TeacherBox\logs）
 ```
@@ -130,28 +130,43 @@ WebView2 官方头文件里的接口没有 `IID_XXX` 导出符号，MSVC 可以�
 ```json
 {
   "version": "1.1.0",
-  "remote": "https://raw.githubusercontent.com/minifan2026/TeacherBox/main/release/update.json",
+  "remote": "https://github.com/minifan2026/TeacherBox/releases/latest/download/update.json",
   "package": ""
 }
 ```
 
 - `version`：当前安装的版本，用于和远端比较
-- `remote`：远端 manifest 的 URL（返回 `{"version":"1.1.0","package":"https://.../TeacherBox-1.1.0-win64.zip"}`）
+- `remote`：远端 manifest 的 URL。这里用 Releases 的 `latest/download/` 固定路径，发新版本不用改地址
 - `package`：本地更新包文件名（相对 exe 目录），用于离线分发/测试；`remote` 为空时只走它
+
+远端 manifest 长这样：
+
+```json
+{
+  "version": "1.1.0",
+  "package": "https://github.com/minifan2026/TeacherBox/releases/latest/download/TeacherBox-1.1.0-win64.zip"
+}
+```
 
 升级流程：拉取 manifest → 比较版本 → 下载 zip → 解压到临时目录 → 逐个覆盖。正在运行的 `main.exe` 会先被改名成 `*.old` 再写入新文件，下次启动生效；`*.old` 在下次升级时清理。
 
-远端地址如果是 `raw.githubusercontent.com`，拉取失败时会自动换成 `cdn.jsdelivr.net/gh/...` 再试一次，反之亦然——国内访问 raw 时好时坏，两个地址指向仓库里的同一份文件。
+拉不到时还会换域名重试：`raw.githubusercontent.com` ↔ `cdn.jsdelivr.net/gh/...`。GitHub 站点整体不通时这套没用，得先开 Watt Toolkit。
 
 ### 发一个版本
 
 1. 改 `resources/app.rc` 里的 `FILEVERSION` / `PRODUCTVERSION`
 2. 改 `update.json` 的 `version`，然后 `.\build.ps1` 装配 `dist/`
-3. 打包：`Compress-Archive -Path "dist\*" -DestinationPath "release\TeacherBox-<版本>-win64.zip" -Force`
-4. 写 `release/update.json`，`package` 指向上一步那个 zip 的 raw 地址
-5. 提交推送，老的安装下次启动就会自己升上来
+3. 打包到本地 `release/`（这个目录不进 git）：
+   `Compress-Archive -Path "dist\*" -DestinationPath "release\TeacherBox-<版本>-win64.zip" -Force`
+4. 写 `release/update.json`，`package` 指向下一步会传上去的 zip 下载地址
+5. 发 Release（tag 用 `v<版本>`），把 `update.json` 和 zip 两个文件当附件传上去：
+   ```
+   gh release create v1.1.0 release\update.json release\TeacherBox-1.1.0-win64.zip -t "TeacherBox 1.1.0"
+   ```
+   没装 gh 就在网页上 New release，拖文件进去
+6. 提交推送，老的安装下次启动就会自己升上来
 
-包里的 `update.json` 必须是新版本号，否则每次启动都会重复下载同一个包。
+包里的 `update.json` 必须是新版本号，否则每次启动都会重复下载同一个包。附件名不要带版本号以外的变化（`latest/download/` 是按文件名找的）。
 
 
 ## 日志与反馈
