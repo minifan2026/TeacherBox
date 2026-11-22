@@ -196,8 +196,24 @@ std::string MarketJson(const std::string& error) {
     s += ",\"dev\":";
     s += m.dev ? "true" : "false";
     s += ",\"size\":" + std::to_string((long long)m.size);
+    // 已安装判断不再只看目录：还要比对本地 tool.json 的版本，才能提示「有更新」
+    std::string localVer;
+    bool installed = tb::DirExists(tb::JoinPath(g.toolsDir, tb::ToWide(m.id)));
+    if (installed) {
+      bool ok = false;
+      std::string text = tb::ReadFileUtf8(
+          tb::JoinPath(tb::JoinPath(g.toolsDir, tb::ToWide(m.id)), L"tool.json"), &ok);
+      if (ok) {
+        std::string err;
+        tb::Json doc = tb::Json::Parse(text, &err);
+        if (err.empty() && doc.IsObject()) localVer = doc.GetString("version", "");
+      }
+    }
     s += ",\"installed\":";
-    s += tb::DirExists(tb::JoinPath(g.toolsDir, tb::ToWide(m.id))) ? "true" : "false";
+    s += installed ? "true" : "false";
+    s += ",\"localVersion\":" + tb::Json::Quote(localVer);
+    s += ",\"hasUpdate\":";
+    s += (installed && !m.version.empty() && localVer != m.version) ? "true" : "false";
     s += "}";
   }
   s += "]}";

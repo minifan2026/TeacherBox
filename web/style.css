@@ -242,6 +242,15 @@ h1 {
 .chip.ok { background: var(--green); }
 .chip.miss { background: var(--red); }
 .chip.busy { background: var(--amber); animation: blink 1s steps(2, end) infinite; }
+.chip.upd { background: var(--amber); }
+
+.card-local {
+  margin-left: 8px;
+  color: #9a9384;
+}
+.card-local.has {
+  color: #6f6a5e;
+}
 
 @keyframes blink {
   50% { opacity: .25; }
@@ -428,6 +437,11 @@ h1 {
   font-size: 11px;
   line-height: 16px;
   vertical-align: 1px;
+}
+
+.tag.upd {
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 .market-more {

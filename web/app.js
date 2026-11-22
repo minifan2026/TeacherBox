@@ -274,6 +274,9 @@
     var card = document.createElement("div");
     card.className = "card";
 
+    var local = item.localVersion || "";
+    var hasUpdate = !!item.installed && !!item.version && local !== item.version;
+
     var idEl = document.createElement("div");
     idEl.className = "card-id";
     idEl.textContent = item.id;
@@ -286,7 +289,7 @@
     var line = document.createElement("div");
     line.className = "card-line";
     var dot = document.createElement("span");
-    dot.className = "chip " + (item.installed ? "ok" : "");
+    dot.className = "chip " + (item.installed ? (hasUpdate ? "upd" : "ok") : "");
     line.appendChild(dot);
     var title = document.createElement("h3");
     title.className = "card-title";
@@ -304,6 +307,18 @@
       ver.textContent = "v" + item.version;
       line.appendChild(ver);
     }
+    if (item.installed) {
+      var localTag = document.createElement("span");
+      localTag.className = "card-ver card-local";
+      localTag.textContent = local ? "已装 v" + local : "已装（版本未知）";
+      line.appendChild(localTag);
+    }
+    if (hasUpdate) {
+      var updTag = document.createElement("span");
+      updTag.className = "tag upd";
+      updTag.textContent = "有新版本";
+      line.appendChild(updTag);
+    }
     main.appendChild(line);
 
     if (item.description) {
@@ -320,13 +335,14 @@
     acts.className = "card-actions";
 
     var busy = !!state.marketBusy[item.id];
-    if (item.installed) {
+    if (item.installed && !hasUpdate) {
       var b = makeButton("装好了", "ghost", function () {});
       b.disabled = true;
       acts.appendChild(b);
     } else {
-      var dl = makeButton(busy ? "下载中…" : "下载", "primary", function () {
-        log("下载 " + item.id);
+      var label = hasUpdate ? (busy ? "更新中…" : "更新") : (busy ? "下载中…" : "下载");
+      var dl = makeButton(label, "primary", function () {
+        log(label.replace("…", "") + " " + item.id);
         state.marketBusy[item.id] = true;
         renderMarket();
         send({ cmd: "marketInstall", id: item.id });
