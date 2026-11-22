@@ -1,18 +1,35 @@
 @echo off
-chcp 65001 >nul
+chcp 936 >nul
 cd /d "%~dp0"
 echo.
-echo  æŠŠ TeacherBox çš„ç­¾åè¯ä¹¦è£…è¿›æœ¬æœºçš„ã€Œå—ä¿¡ä»»çš„å‘å¸ƒè€…ã€
-echo  å‘å¸ƒè€…ï¼šminifan
+echo   °Ñ TeacherBox µÄÇ©ÃûÖ¤Êé×°½ø±¾»úµÄ¡¸ÊÜÐÅÈÎµÄ·¢²¼Õß¡¹
+echo   ·¢²¼Õß£ºminifan
 echo.
-if not exist TeacherBox.cer (
-  echo  æ‰¾ä¸åˆ° TeacherBox.cer
-  pause
-  exit /b 1
-)
-certutil -user -addstore "Root" TeacherBox.cer >nul
-certutil -user -addstore "TrustedPublisher" TeacherBox.cer >nul
+if not exist "TeacherBox.cer" goto nocer
+echo   ÕýÔÚÐ´Èëµ±Ç°ÓÃ»§µÄÖ¤Êé¿â¡­¡­
+certutil -user -addstore "Root" "TeacherBox.cer" >nul 2>nul
+if errorlevel 1 goto fail
+certutil -user -addstore "TrustedPublisher" "TeacherBox.cer" >nul 2>nul
+if errorlevel 1 goto fail
 echo.
-echo  å®Œæˆã€‚é‡æ–°æ‰“å¼€ main.exeï¼Œå°±ä¸ä¼šå†æç¤º"æœªçŸ¥å‘å¸ƒè€…"äº†ã€‚
+echo   Íê³É¡£ÖØÐÂ´ò¿ª main.exe£¬¾Í²»»áÔÙÌáÊ¾¡¸Î´Öª·¢²¼Õß¡¹ÁË¡£
 echo.
 pause
+exit /b 0
+
+:nocer
+echo   ÕÒ²»µ½ TeacherBox.cer
+echo   Çë°Ñ±¾ÎÄ¼þºÍ TeacherBox.cer ·ÅÔÚÍ¬Ò»¸öÎÄ¼þ¼ÐÀïÔÙÔËÐÐ¡£
+echo.
+pause
+exit /b 1
+
+:fail
+echo.
+echo   Ð´ÈëÖ¤Êé¿âÊ§°Ü¡£¿ÉÄÜµÄÔ­Òò£º
+echo   - ÕâÌ¨µçÄÔµÄ×é²ßÂÔ½ûÖ¹µ¼ÈëÖ¤Êé
+echo   - Ö¤ÊéÎÄ¼þËð»µ»ò±»¸Ä¹ý
+echo   ¿ÉÒÔ¸ÄÓÃ¹ÜÀíÔ±Éí·ÝÔÙÔËÐÐÒ»´Î±¾ÎÄ¼þ¡£
+echo.
+pause
+exit /b 2
