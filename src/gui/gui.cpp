@@ -1,11 +1,12 @@
 // TeacherBox 主界面（GUI 子系统，无控制台）
 //
 // - 用 WebView2 显示 web/ 目录里的工具箱界面
-// - 系统托盘：左键唤出窗口，右键菜单（显示 / 隐藏 / 工具目录 / 退出）
+// - 系统托盘：左键唤出窗口，右键菜单（显示 / 隐藏 / 检查更新 / 工具目录 / 日志目录 / 退出）
 // - 与 JavaScript 之间用 WebMessage(JSON) 双向通信
 // - 所有工具指令、help.md 的读取都通过 WebMessage 请求触发
 //
-// 若用户点窗口关闭按钮 -> 向 main.exe 发送 EXIT_USER 并正常退出（主程序不会重启）
+// 点窗口关闭按钮 -> 只是收进托盘，进程继续驻留；只有托盘右键「退出 TeacherBox」才向
+// main.exe 发送 EXIT_USER 并真的退出。gui 被外部杀掉时，main 会静默把它拉起来。
 
 #include <windows.h>
 #include <shellapi.h>
@@ -959,10 +960,11 @@ void ShowTrayMenu() {
   AppendMenuW(menu, MF_STRING, 1, L"显示主界面");
   AppendMenuW(menu, MF_STRING, 2, L"隐藏到托盘");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, 3, L"打开工具目录");
-  AppendMenuW(menu, MF_STRING, 4, L"打开日志目录");
+  AppendMenuW(menu, MF_STRING, 3, L"检查更新");
+  AppendMenuW(menu, MF_STRING, 4, L"打开工具目录");
+  AppendMenuW(menu, MF_STRING, 5, L"打开日志目录");
   AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-  AppendMenuW(menu, MF_STRING, 5, L"退出 TeacherBox");
+  AppendMenuW(menu, MF_STRING, 6, L"退出 TeacherBox");
 
   POINT pt;
   GetCursorPos(&pt);
@@ -973,9 +975,19 @@ void ShowTrayMenu() {
   switch (cmd) {
     case 1: ShowMainWindow(); break;
     case 2: ShowWindow(g.hwnd, SW_HIDE); break;
-    case 3: tb::OpenFolder(g.toolsDir); break;
-    case 4: tb::OpenFolder(tb::LogDir()); break;
-    case 5: QuitApp(true); break;
+    case 3: {
+      std::wstring upd = tb::JoinPath(g.exeDir, L"update.exe");
+      if (tb::FileExists(upd)) {
+        tb::LaunchDetached(L"\"" + upd + L"\" --check", g.exeDir);
+        tb::Log(L"gui", "[tray] 检查更新");
+      } else {
+        MessageBoxW(g.hwnd, L"找不到 update.exe，无法检查更新。", kWindowTitle, MB_OK | MB_ICONINFORMATION);
+      }
+      break;
+    }
+    case 4: tb::OpenFolder(g.toolsDir); break;
+    case 5: tb::OpenFolder(tb::LogDir()); break;
+    case 6: QuitApp(true); break;   // 只有这里才真的退出
     default: break;
   }
 }
@@ -1009,8 +1021,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
       break;
 
 
-    case WM_CLOSE:
-      QuitApp(true);
+    case WM_CLOSE:                       // 关窗口 = 收进托盘，程序继续驻留
+      tb::Log(L"gui", "[tray] 关闭窗口，留在托盘");
+      ShowWindow(hwnd, SW_HIDE);
       return 0;
 
     case WM_DESTROY:

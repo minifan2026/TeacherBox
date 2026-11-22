@@ -281,3 +281,10 @@ GitHub Pages 是纯静态，`?offset=50` 这种查询串服务端拿不到，所
 页拉不动会回落到仓库里的 `market.json`（老地址），所以没网 / 没 Pages 也不会空着。
 
 站点仓库：`https://github.com/minifan2026/TeacherBoxWeb`（`tools-index.json` 是唯一真相，`scripts\build-api.ps1` 生成分页文件）。
+
+## 1.1.5 托盘行为
+
+- 点窗口关闭按钮 = 收进托盘，进程继续跑；**只有托盘右键「退出 TeacherBox」才真的退出**。
+- 托盘右键菜单：显示主界面 / 隐藏到托盘 / 检查更新 / 打开工具目录 / 打开日志目录 / 退出 TeacherBox。
+- 「检查更新」调 `update.exe --check`：只比版本号，不下载、不覆盖正在运行的 exe；有新版本会提示「重启 TeacherBox 会自动升级」。
+- 托盘图标挂在 gui 上，gui 被外部杀掉托盘会跟着消失，所以 main 现在会**静默拉起来**（第一次异常不弹窗、不收反馈），连续崩第二次才开始问要不要生成反馈。

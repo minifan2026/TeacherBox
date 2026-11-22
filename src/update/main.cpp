@@ -37,6 +37,7 @@ struct Updater {
 };
 
 Updater g_up;
+bool    g_checkOnly = false;   // --check：只查版本，不下载不覆盖文件
 
 void PostStatus(const std::wstring& text) {
   if (g_up.ipc) g_up.ipc->SendLine("STATUS " + tb::ToUtf8(text));
@@ -299,6 +300,19 @@ void DoUpdate() {
   }
 
   std::string remoteVersion = manifest.GetString("version", localVersion);
+
+  // 托盘「检查更新」：只比版本号，不下载、不覆盖正在跑的 exe
+  if (g_checkOnly) {
+    if (CompareVersion(remoteVersion, localVersion) <= 0) {
+      PostStatus(L"当前已是最新版本 v" + tb::ToWide(localVersion));
+    } else {
+      PostStatus(L"发现新版本 v" + tb::ToWide(remoteVersion) + L"，重启 TeacherBox 会自动升级");
+    }
+    PostProgress(100);
+    Sleep(1500);
+    return;
+  }
+
   if (CompareVersion(remoteVersion, localVersion) <= 0) {
     PostStatus(L"当前已是最新版本 v" + tb::ToWide(localVersion));
     PostProgress(100);
@@ -478,6 +492,7 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
     LocalFree(argv);
   }
   std::wstring pipeName = GetCmdArg(cmdLine, L"--ipc");
+  if (cmdLine.find(L"--check") != std::wstring::npos) g_checkOnly = true;
   if (!pipeName.empty()) {
     if (ipc.Connect(pipeName, 5000)) {
       tb::Log(L"update", "[ipc] connected");

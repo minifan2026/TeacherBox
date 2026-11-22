@@ -312,11 +312,19 @@ int APIENTRY wWinMain(HINSTANCE, HINSTANCE, LPWSTR lpCmdLine, int) {
     } else {
       ++failures;
     }
-    tb::Log(L"main", "[main] 异常退出，连续失败 " + std::to_string(failures) + " 次");
+    tb::Log(L"main", "[main] 界面进程异常退出，连续失败 " + std::to_string(failures) + " 次");
 
     if (failures >= kMaxFailures) {
       ShowFatal();
       break;
+    }
+
+    // 托盘挂在 gui 上，gui 一没托盘就跟着没。所以能静默拉回来就先静默拉回来，
+    // 只有连着崩才打扰用户、收反馈。
+    if (failures < 2) {
+      tb::Log(L"main", "[main] 静默重启界面进程");
+      Sleep(600);
+      continue;
     }
 
     if (AskFeedback(gui.exitCode) == IDYES) {
