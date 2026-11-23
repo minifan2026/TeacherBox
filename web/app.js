@@ -38,6 +38,7 @@
   var elMarketEmpty = document.getElementById("market-empty");
   var elMarketError = document.getElementById("market-error");
   var elMarketNote = document.getElementById("market-note");
+  var elContent = document.querySelector(".content");
 
   function send(payload) {
     if (bridge) bridge.postMessage(payload);
@@ -355,6 +356,33 @@
     return card;
   }
 
+  // ------------------------------------------------------------ 市场分页
+  // 滚动到底就拉下一页（用户翻到第几页就拉到第几页），也保留「加载更多」按钮兜底
+  function marketCanMore() {
+    return state.view === "market" && state.marketLoaded && !state.marketLoading &&
+           state.marketTotal > 0 && state.market.length < state.marketTotal;
+  }
+
+  function requestMoreMarket() {
+    if (!marketCanMore()) return;
+    state.marketLoading = true;
+    renderMarket();
+    send({ cmd: "marketMore" });
+  }
+
+  var morePending = false;
+  function marketFillCheck() {
+    if (morePending || !marketCanMore()) return;
+    if (!elContent) return;
+    // 这一页还没填满一屏（或者滚动条快到低了），继续拉
+    if (elContent.scrollHeight <= elContent.clientHeight + 60 ||
+        elContent.scrollTop + elContent.clientHeight >= elContent.scrollHeight - 220) {
+      morePending = true;
+      requestMoreMarket();
+      setTimeout(function () { morePending = false; }, 600);
+    }
+  }
+
   function renderMarket() {
     elMarketGrid.textContent = "";
     state.market.forEach(function (m) { elMarketGrid.appendChild(renderMarketCard(m)); });
@@ -379,6 +407,9 @@
       stat.textContent = "";
       more.classList.add("hidden");
     }
+
+    // 一页不够一屏时自动接着拉，别让人对着空白干等
+    if (state.view === "market") setTimeout(marketFillCheck, 220);
   }
 
   function showMarketError(text) {
@@ -516,8 +547,14 @@
 
   // ------------------------------------------------------------ 交互绑定
   document.getElementById("btn-refresh").addEventListener("click", function () {
-    log("扫描");
+    log("刷新：重扫本机工具 + 重拉线上清单");
     send({ cmd: "refresh" });
+    // 本机工具重扫之外，线上清单也绕过缓存重新拉一遍
+    if (!state.marketLoading) {
+      state.marketLoading = true;
+      renderMarket();
+    }
+    send({ cmd: "marketRefresh" });
   });
 
   document.getElementById("btn-folder").addEventListener("click", function () {
@@ -536,11 +573,12 @@
   document.getElementById("tab-market").addEventListener("click", function () { setView("market"); });
 
   document.getElementById("btn-market-more").addEventListener("click", function () {
-    if (state.marketLoading) return;
-    state.marketLoading = true;
-    renderMarket();
-    send({ cmd: "marketMore" });
+    requestMoreMarket();
   });
+
+  if (elContent) {
+    elContent.addEventListener("scroll", function () { marketFillCheck(); }, { passive: true });
+  }
 
   document.getElementById("btn-market-refresh").addEventListener("click", function () {
     state.marketLoading = true;

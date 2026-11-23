@@ -254,20 +254,35 @@ bool ParseMarketText(const std::string& text, std::vector<MarketItem>& items, in
   return true;
 }
 
+// 清单地址带时间戳，绕开 GitHub Pages 的 CDN 缓存，点了刷新才真的拿到新清单
+std::wstring MarketPageUrl(int offset, const std::wstring& tag) {
+  return std::wstring(kMarketBase) + L"/api/page-" + tb::ToWide(std::to_string(offset)) + L".json" + tag;
+}
+
+void AbsolutizeMarketUrls(std::vector<MarketItem>& items) {
+  for (MarketItem& m : items) {
+    if (m.url.find("://") == std::string::npos) {
+      m.url = std::string(tb::ToUtf8(std::wstring(kMarketBase))) + "/" + m.url;
+    }
+  }
+}
+
 // 取一页（50 条）：offset=0 追加第一页，之后点「加载更多」按 50 递增
 void FetchMarketAsync(int offset, bool append) {
   if (g.marketFetching) return;
   g.marketFetching = true;
   PostJson("{\"type\":\"marketLoading\",\"busy\":true}");
 
-  std::thread([offset, append]() {
+  std::wstring tag = L"?r=" + tb::ToWide(std::to_string((unsigned long long)GetTickCount64()));
+
+  std::thread([offset, append, tag]() {
     std::string text;
     bool netErr = false;
     std::string error;
     std::vector<MarketItem> items;
     int total = 0;
 
-    std::wstring url = std::wstring(kMarketBase) + L"/api/page-" + tb::ToWide(std::to_string(offset)) + L".json";
+    std::wstring url = MarketPageUrl(offset, tag);
     bool ok = tb::HttpGetText(url, text, &netErr);
     bool parsed = ok && ParseMarketText(text, items, total);
 
@@ -314,6 +329,79 @@ void FetchMarketAsync(int offset, bool append) {
     tb::Log(L"gui", "[market] offset " + std::to_string(offset) + " -> " + std::to_string(items.size()) +
                         " 条，累计 " + std::to_string(g.marketOffset) + "/" + std::to_string(g.marketTotal) +
                         (error.empty() ? "" : "，错误：" + error));
+    PostJson(MarketJson(error));
+    PostJson("{\"type\":\"marketLoading\",\"busy\":false}");
+  }).detach();
+}
+
+// 刷新清单：忽略内存里的旧清单，从第 1 页重新拉；但保留用户已经翻到的页数，
+// 逐页补回来（用户翻到第几页就拉到第几页），不用重登应用
+void RefreshMarketAsync(int pages) {
+  if (g.marketFetching) {
+    // 正在拉的时候又被点了一次：告诉前端还在忙，等这次拉完自己会发 busy=false
+    PostJson("{\"type\":\"marketLoading\",\"busy\":true}");
+    return;
+  }
+  if (pages < 1) pages = 1;
+  g.marketFetching = true;
+  PostJson("{\"type\":\"marketLoading\",\"busy\":true}");
+
+  std::wstring tag = L"?r=" + tb::ToWide(std::to_string((unsigned long long)GetTickCount64()));
+
+  std::thread([pages, tag]() {
+    std::vector<MarketItem> all;
+    int total = 0;
+    std::string error;
+    bool netErr = false;
+
+    for (int p = 0; p < pages; ++p) {
+      int offset = p * kMarketPage;
+      std::string text;
+      std::vector<MarketItem> items;
+      int pageTotal = 0;
+      bool ok = tb::HttpGetText(MarketPageUrl(offset, tag), text, &netErr);
+      bool parsed = ok && ParseMarketText(text, items, pageTotal);
+      if (!parsed) {
+        if (p == 0) {
+          error = netErr ? "连不上工具市场，先打开 Watt Toolkit 里的 GitHub 加速再试"
+                         : "清单地址返回异常";
+        }
+        break;
+      }
+      if (pageTotal > total) total = pageTotal;
+      if (items.empty()) break;                      // 没有更多了
+      all.insert(all.end(), items.begin(), items.end());
+      if ((int)items.size() < kMarketPage) break;    // 最后一页
+    }
+
+    // 一页都拉不动就回落到仓库里的老清单
+    if (all.empty()) {
+      std::string fb;
+      bool fbErr = false;
+      if (tb::HttpGetText(kMarketFallback, fb, &fbErr)) {
+        std::vector<MarketItem> fbItems;
+        int fbTotal = 0;
+        if (ParseMarketText(fb, fbItems, fbTotal) && !fbItems.empty()) {
+          all = fbItems;
+          total = fbTotal;
+          error.clear();
+        }
+      }
+    }
+    if (!all.empty() && !error.empty()) error.clear();   // 后面几页失败不算整体失败
+
+    AbsolutizeMarketUrls(all);
+
+    {
+      std::lock_guard<std::mutex> lock(g_marketLock);
+      g.market = all;
+      g.marketOffset = (int)all.size();
+      g.marketTotal = total > (int)all.size() ? total : (int)all.size();
+    }
+    if (!all.empty()) g.marketLoaded = true;
+    g.marketFetching = false;
+    tb::Log(L"gui", "[market] 刷新 " + std::to_string(pages) + " 页 -> " + std::to_string(all.size()) +
+                        " 条，合计 " + std::to_string(g.marketTotal) + (error.empty() ? "" : "，错误：" + error));
     PostJson(MarketJson(error));
     PostJson("{\"type\":\"marketLoading\",\"busy\":false}");
   }).detach();
@@ -722,14 +810,12 @@ void HandleMessage(const std::string& text) {
       FetchMarketAsync(g.marketOffset, true);
     }
   } else if (cmd == "marketRefresh") {
-    g.marketLoaded = false;
-    g.marketOffset = 0;
-    g.marketTotal = 0;
-    {
-      std::lock_guard<std::mutex> lock(g_marketLock);
-      g.market.clear();
-    }
-    FetchMarketAsync(0, false);
+    // 刷新 = 本机工具重扫一遍 + 线上清单按已翻页数重拉一遍（不再用内存缓存）
+    int pages = (g.marketOffset + kMarketPage - 1) / kMarketPage;
+    if (pages < 1) pages = 1;
+    RescanTools();
+    PostJson(ToolsJson());
+    RefreshMarketAsync(pages);
   } else if (cmd == "marketInstall") {
     ImportMarketItem(id);
   } else if (cmd == "importFile") {
