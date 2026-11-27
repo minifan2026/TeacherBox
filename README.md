@@ -355,3 +355,14 @@ GitHub Pages 是纯静态，`?offset=50` 这种查询串服务端拿不到，所
 - 这一步是**本地暂存**，不会自动上架；把包发给 minifan 审核后才进市场。
 
 验证：MSVC Release 编译通过；前端桩测试 13/13（遮罩开关、点发布发 `publishTool`、取消选择关窗、成功后拉 `pendingList`、列表渲染 / 删除按钮 / 打开待审目录、无页面报错）。
+
+**审核上架（作者侧）**：`scripts\promote-pending.ps1` 把待审包转成市场正式工具——解包到 `TeacherBoxWeb\packages\<id>`、复制 zip 到 `tools\<id>.zip`、更新 `tools-index.json`、重跑 `build-api.ps1` 生成分页接口，然后自己 commit / push 市场仓库。用法：
+
+```powershell
+.\scripts\promote-pending.ps1                 # 上架待审区最新的一个
+.\scripts\promote-pending.ps1 -Id mytool      # 指定工具
+.\scripts\promote-pending.ps1 -All            # 全部
+.\scripts\promote-pending.ps1 -DryRun         # 只看会做什么
+```
+
+旧的 `packages\<id>` 会先备份到 `%TEMP%`；压缩包根没有 `tool.json` 时直接拒绝，避免把套娃目录传上去。
