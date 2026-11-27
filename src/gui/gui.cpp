@@ -9,6 +9,8 @@
 // main.exe 发送 EXIT_USER 并真的退出。gui 被外部杀掉时，main 会静默把它拉起来。
 
 #include <windows.h>
+#include <shlobj.h>
+#include <oleidl.h>
 #include <shellapi.h>
 #include <dwmapi.h>
 #include <commdlg.h>
@@ -19,6 +21,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <ctime>
 
 #include "ipc.h"
 #include "json.h"
@@ -42,9 +45,11 @@ const wchar_t* kMarketBase     = L"https://minifan2026.github.io/TeacherBoxWeb";
 const wchar_t* kMarketFallback = L"https://raw.githubusercontent.com/minifan2026/TeacherBox/main/market.json";
 const int      kMarketPage     = 50;
 
-// IID_IUnknown（避免依赖 uuid.lib）
+// IID_IUnknown / IID_IDropTarget（避免依赖 uuid.lib）
 const GUID kIID_Unknown = {0x00000000, 0x0000, 0x0000,
                            {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
+const GUID kIID_IDropTarget = {0x00000122, 0x0000, 0x0000,
+                               {0xC0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x46}};
 
 struct MarketItem {
   std::string id;
@@ -654,16 +659,10 @@ bool InstallOne(const std::wstring& path, std::string& outId, std::string& error
 }
 
 // 拖进窗口：zip、整个工具文件夹、一次拖多个都收
-void HandleDroppedFiles(HDROP drop) {
-  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
-  std::vector<std::wstring> paths;
-  for (UINT i = 0; i < count; ++i) {
-    wchar_t path[MAX_PATH * 2] = {0};
-    if (DragQueryFileW(drop, i, path, MAX_PATH * 2) == 0) continue;
-    paths.push_back(path);
-  }
-  DragFinish(drop);
+// 拿到真实路径之后的统一安装流程（WM_DROPFILES 和 OLE 拖放两条路都走这里）
+void HandleDropPaths(const std::vector<std::wstring>& paths) {
   if (paths.empty()) return;
+  PostJson("{\"type\":\"dragHover\",\"on\":false}");
 
   tb::Log(L"gui", "[import] 拖入 " + std::to_string(paths.size()) + " 项：" + tb::ToUtf8(paths[0]) +
                       (paths.size() > 1 ? " 等" : ""));
@@ -701,6 +700,314 @@ void HandleDroppedFiles(HDROP drop) {
   }).detach();
 }
 
+void HandleDroppedFiles(HDROP drop) {
+  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  std::vector<std::wstring> paths;
+  for (UINT i = 0; i < count; ++i) {
+    wchar_t path[MAX_PATH * 2] = {0};
+    if (DragQueryFileW(drop, i, path, MAX_PATH * 2) == 0) continue;
+    paths.push_back(path);
+  }
+  DragFinish(drop);
+  HandleDropPaths(paths);
+}
+
+// OLE 拖放目标：WebView2 关掉 AllowExternalDrop 后，资源管理器拖过来的文件由宿主直接收，
+// 好处是拖动过程中就有 DragEnter / DragLeave，可以立刻让页面亮出「松手就装」的遮罩。
+class DropTarget : public IDropTarget {
+public:
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+    if (!ppv) return E_POINTER;
+    if (IsEqualIID(riid, kIID_Unknown) || IsEqualIID(riid, kIID_IDropTarget)) {
+      *ppv = static_cast<IDropTarget*>(this);
+      AddRef();
+      return S_OK;
+    }
+    *ppv = nullptr;
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&ref_); }
+  ULONG STDMETHODCALLTYPE Release() override {
+    LONG r = InterlockedDecrement(&ref_);
+    if (r == 0) delete this;
+    return (ULONG)r;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
+    if (HasFiles(data)) {
+      if (effect) *effect = DROPEFFECT_COPY;
+      if (!hover_) {
+        hover_ = true;
+        PostJson("{\"type\":\"dragHover\",\"on\":true}");
+      }
+    } else {
+      if (effect) *effect = DROPEFFECT_NONE;
+    }
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL, DWORD* effect) override {
+    if (effect) *effect = hover_ ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE DragLeave() override {
+    SetHover(false);
+    return S_OK;
+  }
+
+  HRESULT STDMETHODCALLTYPE Drop(IDataObject* data, DWORD, POINTL, DWORD* effect) override {
+    SetHover(false);
+    if (effect) *effect = DROPEFFECT_COPY;
+    std::vector<std::wstring> paths;
+    if (ReadPaths(data, paths)) {
+      if (paths.empty()) return S_OK;
+      HandleDropPaths(paths);
+    } else {
+      PostImportResult(false, "", "读不出拖进来的文件路径");
+    }
+    return S_OK;
+  }
+
+private:
+  static bool HasFiles(IDataObject* data) {
+    FORMATETC fe{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    return data && data->QueryGetData(&fe) == S_OK;
+  }
+
+  static bool ReadPaths(IDataObject* data, std::vector<std::wstring>& out) {
+    FORMATETC fe{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+    STGMEDIUM stg{};
+    if (!data || data->GetData(&fe, &stg) != S_OK) return false;
+    HDROP drop = reinterpret_cast<HDROP>(GlobalLock(stg.hGlobal));
+    if (drop) {
+      UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      for (UINT i = 0; i < count; ++i) {
+        wchar_t path[MAX_PATH * 2] = {0};
+        if (DragQueryFileW(drop, i, path, MAX_PATH * 2)) out.push_back(path);
+      }
+      GlobalUnlock(stg.hGlobal);
+    }
+    ReleaseStgMedium(&stg);
+    return !out.empty();
+  }
+
+  void SetHover(bool on) {
+    if (hover_ == on) return;
+    hover_ = on;
+    PostJson(on ? "{\"type\":\"dragHover\",\"on\":true}" : "{\"type\":\"dragHover\",\"on\":false}");
+  }
+
+  LONG ref_ = 1;
+  bool hover_ = false;
+};
+
+
+// ------------------------------------------------------------------ 提交审核（暂存）
+
+std::wstring PendingDir() {
+  std::wstring d = tb::JoinPath(tb::AppDataDir(), L"pending");
+  tb::EnsureDir(d);
+  return d;
+}
+
+std::wstring PsQuotePath(const std::wstring& s) {
+  std::wstring r;
+  for (wchar_t c : s) {
+    if (c == L'\'') r += L"''";
+    r += c;
+  }
+  return r;
+}
+
+// 从工具文件夹读 tool.json，拿 id/name/version/desc
+bool ReadToolMeta(const std::wstring& dir, std::string& id, std::string& name,
+                  std::string& version, std::string& desc, std::string& error) {
+  std::wstring manifest = tb::JoinPath(dir, L"tool.json");
+  if (!tb::FileExists(manifest)) {
+    error = "这个文件夹里没有 tool.json，不是工具包";
+    return false;
+  }
+  bool ok = false;
+  std::string text = tb::ReadFileUtf8(manifest, &ok);
+  if (!ok) { error = "读不到 tool.json"; return false; }
+  std::string err;
+  tb::Json m = tb::Json::Parse(text, &err);
+  if (!err.empty() || !m.IsObject()) {
+    error = "tool.json 解析失败：" + (err.empty() ? "不是对象" : err);
+    return false;
+  }
+  name = m.GetString("name", "");
+  version = m.GetString("version", "");
+  desc = m.GetString("description", m.GetString("desc", ""));
+  size_t pos = dir.find_last_of(L"\\/");
+  id = SanitizeId(tb::ToUtf8(pos == std::wstring::npos ? dir : dir.substr(pos + 1)));
+  if (!tb::IsValidToolId(id)) {
+    error = "文件夹名不合规：只允许字母、数字和 . _ - +";
+    return false;
+  }
+  if (name.empty()) { error = "tool.json 里没写 name"; return false; }
+  if (version.empty()) version = "1.0";
+  return true;
+}
+
+double FileSizeOf(const std::wstring& path) {
+  HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+                         OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h == INVALID_HANDLE_VALUE) return 0;
+  LARGE_INTEGER sz{};
+  GetFileSizeEx(h, &sz);
+  CloseHandle(h);
+  return (double)sz.QuadPart;
+}
+
+struct PendingItem {
+  std::string  id, name, version, desc, file;
+  double       size = 0;
+  long long    created = 0;
+};
+
+void ScanPending(std::vector<PendingItem>& out) {
+  std::wstring dir = PendingDir();
+  WIN32_FIND_DATAW fd{};
+  HANDLE h = FindFirstFileW(tb::JoinPath(dir, L"*.zip").c_str(), &fd);
+  if (h == INVALID_HANDLE_VALUE) return;
+  do {
+    if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+    PendingItem item;
+    item.file = tb::ToUtf8(fd.cFileName);
+    item.size = (double)fd.nFileSizeLow + (double)fd.nFileSizeHigh * 4294967296.0;
+    ULARGE_INTEGER ft;
+    ft.LowPart = fd.ftCreationTime.dwLowDateTime;
+    ft.HighPart = fd.ftCreationTime.dwHighDateTime;
+    item.created = (long long)((ft.QuadPart - 116444736000000000ULL) / 10000000ULL);
+    std::wstring sidecar = tb::JoinPath(dir, fd.cFileName);
+    sidecar += L".json";
+    bool ok = false;
+    std::string meta = tb::ReadFileUtf8(sidecar, &ok);
+    if (ok && !meta.empty()) {
+      std::string err;
+      tb::Json j = tb::Json::Parse(meta, &err);
+      if (err.empty()) {
+        item.id = j.GetString("id", "");
+        item.name = j.GetString("name", "");
+        item.version = j.GetString("version", "");
+        item.desc = j.GetString("desc", "");
+      }
+    }
+    if (item.id.empty()) {
+      size_t dot = item.file.find_last_of('.');
+      item.id = dot == std::string::npos ? item.file : item.file.substr(0, dot);
+    }
+    out.push_back(item);
+  } while (FindNextFileW(h, &fd));
+  FindClose(h);
+}
+
+std::string PendingJson() {
+  std::vector<PendingItem> items;
+  ScanPending(items);
+  std::string s = "{\"type\":\"pending\",\"dir\":" + tb::Json::Quote(tb::ToUtf8(PendingDir())) +
+                  ",\"items\":[";
+  for (size_t i = 0; i < items.size(); ++i) {
+    const PendingItem& p = items[i];
+    if (i) s += ",";
+    s += "{\"id\":" + tb::Json::Quote(p.id);
+    s += ",\"name\":" + tb::Json::Quote(p.name);
+    s += ",\"version\":" + tb::Json::Quote(p.version);
+    s += ",\"desc\":" + tb::Json::Quote(p.desc);
+    s += ",\"file\":" + tb::Json::Quote(p.file);
+    s += ",\"size\":" + std::to_string((long long)p.size);
+    s += ",\"created\":" + std::to_string(p.created);
+    s += "}";
+  }
+  s += "]}";
+  return s;
+}
+
+void PostPublishResult(bool ok, const std::string& message, const std::string& id = "",
+                       const std::string& version = "", const std::string& path = "") {
+  std::string json = "{\"type\":\"publish\",\"ok\":";
+  json += ok ? "true" : "false";
+  json += ",\"message\":" + tb::Json::Quote(message);
+  json += ",\"id\":" + tb::Json::Quote(id);
+  json += ",\"version\":" + tb::Json::Quote(version);
+  json += ",\"path\":" + tb::Json::Quote(path);
+  json += "}";
+  PostJson(json);
+  if (ok) PostJson(PendingJson());
+}
+
+// 「发布」：选工具文件夹 → 校验 tool.json → 打包到待审区
+void PublishFromDialog() {
+  BROWSEINFOW bi{};
+  bi.hwndOwner = g.hwnd;
+  bi.lpszTitle = L"选择要提交审核的工具文件夹（里面要有 tool.json）";
+  bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+  PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+  if (!pidl) {
+    PostPublishResult(false, "没有选择文件夹");
+    return;
+  }
+  wchar_t buf[MAX_PATH * 2] = {0};
+  BOOL got = SHGetPathFromIDListW(pidl, buf);
+  CoTaskMemFree(pidl);
+  if (!got) {
+    PostPublishResult(false, "拿不到文件夹路径");
+    return;
+  }
+  std::wstring dir = buf;
+  tb::Log(L"gui", "[publish] 选中 " + tb::ToUtf8(dir));
+
+  std::thread([dir]() {
+    std::string id, name, version, desc, error;
+    if (!ReadToolMeta(dir, id, name, version, desc, error)) {
+      PostPublishResult(false, error);
+      return;
+    }
+    std::wstring pend = PendingDir();
+    std::wstring zip = tb::JoinPath(pend, tb::ToWide(id + "-" + version + ".zip"));
+    std::wstring cmd = L"powershell.exe -NoProfile -ExecutionPolicy Bypass -Command \"Compress-Archive -Path '" +
+                       PsQuotePath(tb::JoinPath(dir, L"*")) + L"' -DestinationPath '" +
+                       PsQuotePath(zip) + L"' -Force\"";
+    tb::RunResult r = tb::RunCommand(cmd, 180000, L"");
+    bool ok = r.started && r.exitCode == 0 && tb::FileExists(zip);
+    if (!ok) {   // 兜底走 Win10 自带的 bsdtar
+      tb::RunResult r2 = tb::RunCommand(L"tar.exe -a -c -f \"" + zip + L"\" -C \"" + dir + L"\" .",
+                                       180000, L"");
+      ok = r2.started && r2.exitCode == 0 && tb::FileExists(zip);
+    }
+    if (!ok) {
+      PostPublishResult(false, "打包失败，检查文件夹里是否有被占用的文件");
+      return;
+    }
+
+    std::string meta = "{\"id\":" + tb::Json::Quote(id) +
+                       ",\"name\":" + tb::Json::Quote(name) +
+                       ",\"version\":" + tb::Json::Quote(version) +
+                       ",\"desc\":" + tb::Json::Quote(desc) +
+                       ",\"size\":" + std::to_string((long long)FileSizeOf(zip)) +
+                       ",\"created\":" + std::to_string((long long)time(nullptr)) +
+                       ",\"src\":" + tb::Json::Quote(tb::ToUtf8(dir)) + "}";
+    tb::WriteFileUtf8(zip + L".json", meta);
+    tb::Log(L"gui", "[publish] 已暂存 " + id + " " + version + " -> " + tb::ToUtf8(zip));
+    PostPublishResult(true, "已暂存到待审核区", id, version, tb::ToUtf8(zip));
+  }).detach();
+}
+
+void DeletePending(const std::string& file) {
+  if (file.empty() || file.find('/') != std::string::npos || file.find('\\') != std::string::npos ||
+      file.find("..") != std::string::npos || file.size() < 5 ||
+      _stricmp(file.substr(file.size() - 4).c_str(), ".zip") != 0) {
+    PostPublishResult(false, "文件名不合规");
+    return;
+  }
+  std::wstring zip = tb::JoinPath(PendingDir(), tb::ToWide(file));
+  bool ok = false;
+  if (tb::FileExists(zip)) ok = DeleteFileW(zip.c_str()) != 0;
+  DeleteFileW((zip + L".json").c_str());
+  PostPublishResult(ok, ok ? "已删除待审包" : "删除失败，文件可能被占用");
+}
 
 // ------------------------------------------------------------------ 终止
 
@@ -882,9 +1189,17 @@ void HandleMessage(const std::string& text) {
     ImportFromPageData(msg.GetString("name", "tool.zip"), msg.GetString("data", ""));
   } else if (cmd == "openFolder") {
     std::string which = msg.GetString("target", "tools");
-    std::wstring dir = (which == "logs") ? tb::LogDir() : g.toolsDir;
+    std::wstring dir = (which == "logs")    ? tb::LogDir()
+                     : (which == "pending") ? PendingDir()
+                                            : g.toolsDir;
     tb::OpenFolder(dir);
     PostJson("{\"type\":\"openFolder\",\"ok\":true,\"path\":" + tb::Json::Quote(tb::ToUtf8(dir)) + "}");
+  } else if (cmd == "publishTool") {          // 选文件夹 → 打包 → 存进待审区
+    PublishFromDialog();
+  } else if (cmd == "pendingList") {
+    PostJson(PendingJson());
+  } else if (cmd == "pendingDelete") {
+    DeletePending(msg.GetString("file", ""));
   } else if (cmd == "hide") {
     ShowWindow(g.hwnd, SW_HIDE);
     PostJson("{\"type\":\"hidden\"}");
@@ -1167,6 +1482,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE:
       g.hwnd = hwnd;
       DragAcceptFiles(hwnd, TRUE);
+      // 同时注册 OLE 拖放：拖动过程中就能通知页面亮遮罩，WM_DROPFILES 留作兜底
+      {
+        DropTarget* dt = new DropTarget();
+        if (FAILED(RegisterDragDrop(hwnd, dt))) {
+          tb::Log(L"gui", "[drop] RegisterDragDrop 失败，只靠 WM_DROPFILES");
+          dt->Release();
+        }
+      }
       return 0;
 
     case WM_DROPFILES:
@@ -1196,6 +1519,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
     case WM_DESTROY:
       RemoveTrayIcon();
+      RevokeDragDrop(hwnd);
       if (g.controller) { g.controller->Close(); g.controller->Release(); g.controller = nullptr; }
       if (g.webview) { g.webview->Release(); g.webview = nullptr; }
       PostQuitMessage(0);
@@ -1261,6 +1585,7 @@ int APIENTRY wWinMain(HINSTANCE hinst, HINSTANCE, LPWSTR, int) {
   SetUnhandledExceptionFilter(CrashFilter);
 
   HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  OleInitialize(nullptr);      // RegisterDragDrop（宿主接拖放）需要 OLE
 
   g.exeDir = tb::ExeDir();
   g.webDir = tb::JoinPath(g.exeDir, L"web");

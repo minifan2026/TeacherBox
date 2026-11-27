@@ -17,7 +17,9 @@
     marketLoaded: false,
     marketOffset: 0,
     marketTotal: 0,
-    marketLoading: false
+    marketLoading: false,
+    pending: [],
+    pendingDir: ""
   };
 
   var elGrid = document.getElementById("grid");
@@ -538,12 +540,122 @@
       case "appInfo":
         if (data.version) elVersion.textContent = "v" + data.version;
         break;
+
+      case "dragHover":
+        setDropMask(!!data.on);
+        break;
+
+      case "publish":
+        publishBusy = false;
+        if (!data.ok && data.message === "没有选择文件夹") {
+          pendingOpen = false;
+          elModal.classList.add("hidden");
+          break;
+        }
+        log(data.ok ? ("已暂存待审：" + (data.id || "") + " " + (data.version || ""))
+                    : ("提交失败：" + (data.message || "")));
+        showPending(data.message || (data.ok ? "已暂存" : "提交失败"), !!data.ok);
+        break;
+
+      case "pending":
+        state.pending = data.items || [];
+        state.pendingDir = data.dir || "";
+        renderPending();
+        break;
     }
   }
 
   if (bridge) {
     bridge.addEventListener("message", function (event) { handleMessage(event.data); });
   }
+
+  // ------------------------------------------------------------ 发布（暂存待审）
+  var publishBusy = false;
+  var pendingOpen = false;
+
+  function fmtSize(n) {
+    n = Number(n) || 0;
+    if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB";
+    if (n >= 1024) return (n / 1024).toFixed(0) + " KB";
+    return n + " B";
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return "";
+    var d = new Date(Number(ts) * 1000);
+    function p(x) { return (x < 10 ? "0" : "") + x; }
+    return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate()) +
+           " " + p(d.getHours()) + ":" + p(d.getMinutes());
+  }
+
+  function setDropMask(on) {
+    var el = document.getElementById("dropmask");
+    if (el) el.classList.toggle("hidden", !on);
+  }
+
+  function renderPending() {
+    if (!pendingOpen) return;
+    var items = state.pending || [];
+    var html = "";
+    if (!items.length) {
+      html = '<p class="pj-empty">待审区还是空的。点「发布」选中一个带 tool.json 的工具文件夹，会打包存到这里。</p>';
+    } else {
+      html = '<div class="pj-list">';
+      for (var i = 0; i < items.length; i++) {
+        var p = items[i];
+        html += '<div class="pj-row">' +
+                  '<div class="pj-main">' +
+                    '<div><b>' + escapeHtml(p.name || p.id) + '</b>' +
+                    ' <span class="pj-ver">v' + escapeHtml(p.version || "") + '</span></div>' +
+                    '<div class="pj-sub">' + escapeHtml(p.file) + ' · ' + fmtSize(p.size) +
+                    (p.created ? ' · ' + fmtTime(p.created) : '') + '</div>' +
+                  '</div>' +
+                  '<button class="link pj-del" data-file="' + escapeHtml(p.file) + '">删除</button>' +
+                '</div>';
+      }
+      html += '</div>';
+    }
+    html += '<div class="pj-foot">' +
+              '<button class="btn" id="pj-open">打开待审目录</button>' +
+              '<span class="pj-hint">' + escapeHtml(state.pendingDir || "") + '</span>' +
+            '</div>' +
+            '<p class="pj-tip">待审包不会自动上架：把它发给 minifan 审核，通过后才会进市场。</p>';
+    elModalBody.innerHTML = html;
+  }
+
+  function showPending(msg, ok) {
+    pendingOpen = true;
+    elModalTitle.textContent = ok ? "已提交待审核" : "提交没成功";
+    elModalSub.textContent = msg || "";
+    elModal.classList.remove("hidden");
+    renderPending();
+    send({ cmd: "pendingList" });
+  }
+
+  document.getElementById("btn-publish").addEventListener("click", function () {
+    if (publishBusy) { log("上一次还在打包，稍等"); return; }
+    publishBusy = true;
+    pendingOpen = true;
+    elModalTitle.textContent = "提交审核";
+    elModalSub.textContent = "选一个工具文件夹，打包后存进本机待审区";
+    elModalBody.innerHTML = '<p class="pj-empty">正在等选择文件夹…选好后开始打包。</p>';
+    elModal.classList.remove("hidden");
+    send({ cmd: "publishTool" });
+  });
+
+  elModalBody.addEventListener("click", function (e) {
+    var t = e.target;
+    if (!t) return;
+    if (t.id === "pj-open") {
+      send({ cmd: "openFolder", target: "pending" });
+      return;
+    }
+    var file = t.getAttribute && t.getAttribute("data-file");
+    if (file && t.classList.contains("pj-del")) {
+      if (!confirm("删掉待审包 " + file + "？")) return;
+      send({ cmd: "pendingDelete", file: file });
+    }
+  });
 
   // ------------------------------------------------------------ 交互绑定
   document.getElementById("btn-refresh").addEventListener("click", function () {
@@ -595,10 +707,14 @@
 
   document.getElementById("modal-close").addEventListener("click", function () {
     elModal.classList.add("hidden");
+    pendingOpen = false;
   });
 
   elModal.addEventListener("click", function (e) {
-    if (e.target === elModal) elModal.classList.add("hidden");
+    if (e.target === elModal) {
+      elModal.classList.add("hidden");
+      pendingOpen = false;
+    }
   });
 
   elSearch.addEventListener("input", function () {
@@ -607,7 +723,10 @@
   });
 
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") elModal.classList.add("hidden");
+    if (e.key === "Escape") {
+      elModal.classList.add("hidden");
+      pendingOpen = false;
+    }
   });
 
 

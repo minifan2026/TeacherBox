@@ -420,6 +420,45 @@ h1 {
   color: var(--ink-2, #666);
 }
 
+/* -------------------------------------------------------------- 待审列表 */
+
+.pj-list { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.pj-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-2);
+}
+.pj-row:last-child { border-bottom: 0; }
+.pj-main { flex: 1; min-width: 0; }
+.pj-ver {
+  font-size: 11px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+.pj-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+.pj-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+}
+.pj-hint {
+  font-size: 11.5px;
+  color: var(--ink-2);
+  word-break: break-all;
+}
+.pj-empty { color: var(--ink-2); font-size: 13px; }
+.pj-tip { margin-top: 10px; font-size: 11.5px; color: var(--ink-2); }
+
 /* -------------------------------------------------------------- 杂项 */
 
 .hidden { display: none !important; }

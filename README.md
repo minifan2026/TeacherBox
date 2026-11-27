@@ -342,3 +342,16 @@ GitHub Pages 是纯静态，`?offset=50` 这种查询串服务端拿不到，所
 - 页面里的 HTML5 drop 保留作兜底（个别 WebView2 版本仍交给页面时走 base64 通道），文案改成「zip 工具包、整个工具文件夹，一次拖几个也行」。
 
 验证：本机 MSVC Release 构建通过；`signtool verify` 三个 exe 均 Valid；打包后解压核对 `vcruntime140.dll` / `msvcp140.dll` 在包根、`runtime\` 内有 MinGW 库；`main.exe` FileVersion 1.1.9.0。
+
+## 1.2.0 拖放实时提示 + 发布到待审区
+
+**拖放现在有过程反馈**：之前拖放只在松手那一下由宿主收到 `WM_DROPFILES`，拖动过程中页面什么都看不到。现在主窗口额外注册了 OLE 拖放目标（`IDropTarget`）：`DragEnter` 时就给页面发 `dragHover:true`，`DragLeave` / `Drop` 发 `false`，页面立刻盖出「松手就装」的遮罩。`WM_DROPFILES` 保留作兜底。
+
+**发布（暂存待审）**：顶栏加「发布」按钮 ——
+
+- 选中一个带 `tool.json` 的工具文件夹，校验 `name` / `version` / 文件夹名是否合规；
+- 用 `Compress-Archive`（失败再走 `tar`）打包成 `<id>-<version>.zip`，存进 `%LOCALAPPDATA%\TeacherBox\pending\`，同目录写一份 `<zip>.json` 记录 id / 名称 / 版本 / 简介 / 大小 / 时间 / 来源目录；
+- 页面弹出「已提交待审核」，列出待审区里所有包（名称、版本、大小、时间），可「打开待审目录」或「删除」；
+- 这一步是**本地暂存**，不会自动上架；把包发给 minifan 审核后才进市场。
+
+验证：MSVC Release 编译通过；前端桩测试 13/13（遮罩开关、点发布发 `publishTool`、取消选择关窗、成功后拉 `pendingList`、列表渲染 / 删除按钮 / 打开待审目录、无页面报错）。
