@@ -622,25 +622,83 @@ void ImportFromDialog() {
   ImportZipAsync(path, "");
 }
 
-// 拖进窗口：zip 解压安装，目录直接安装
-void HandleDroppedFiles(HDROP drop) {  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+// 同步安装一个东西：目录直接装，zip 先解到临时目录再装
+bool InstallOne(const std::wstring& path, std::string& outId, std::string& error) {
+  if (tb::DirExists(path)) {
+    std::wstring root = FindToolRoot(path);
+    if (root.empty()) { error = "这个文件夹里没有 tool.json，不是工具包"; return false; }
+    return InstallPackage(root, "", outId, error);
+  }
+  size_t dot = path.find_last_of(L'.');
+  std::wstring ext = (dot == std::wstring::npos) ? L"" : path.substr(dot);
+  if (_wcsicmp(ext.c_str(), L".zip") != 0) {
+    size_t sep = path.find_last_of(L"\\/");
+    error = "只认 zip 工具包或工具文件夹，跳过「" +
+            tb::ToUtf8(sep == std::wstring::npos ? path : path.substr(sep + 1)) + "」";
+    return false;
+  }
+  std::wstring temp = tb::JoinPath(tb::TempDir(), L"tb-import-" + tb::ToWide(tb::NowStampForFile()));
+  if (!ExtractZip(path, temp)) {
+    tb::DeleteTree(temp);
+    error = "解压失败（zip 可能损坏或被占用）";
+    return false;
+  }
+  std::wstring root = FindToolRoot(temp);
+  size_t sep = path.find_last_of(L"\\/");
+  std::wstring name = (sep == std::wstring::npos) ? path : path.substr(sep + 1);
+  size_t d2 = name.find_last_of(L'.');
+  if (d2 != std::wstring::npos && d2 > 0) name = name.substr(0, d2);
+  bool ok = InstallPackage(root, SanitizeId(tb::ToUtf8(name)), outId, error);
+  tb::DeleteTree(temp);
+  return ok;
+}
+
+// 拖进窗口：zip、整个工具文件夹、一次拖多个都收
+void HandleDroppedFiles(HDROP drop) {
+  UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+  std::vector<std::wstring> paths;
   for (UINT i = 0; i < count; ++i) {
     wchar_t path[MAX_PATH * 2] = {0};
     if (DragQueryFileW(drop, i, path, MAX_PATH * 2) == 0) continue;
-    std::wstring p = path;
-    if (tb::DirExists(p)) {
-      ImportDirAsync(p);
-    } else {
-      size_t dot = p.find_last_of(L'.');
-      std::wstring ext = (dot == std::wstring::npos) ? L"" : p.substr(dot);
-      if (_wcsicmp(ext.c_str(), L".zip") == 0) {
-        ImportZipAsync(p, "");
-      } else {
-        PostImportResult(false, "", "只认 .zip 工具包或工具目录");
-      }
-    }
+    paths.push_back(path);
   }
   DragFinish(drop);
+  if (paths.empty()) return;
+
+  tb::Log(L"gui", "[import] 拖入 " + std::to_string(paths.size()) + " 项：" + tb::ToUtf8(paths[0]) +
+                      (paths.size() > 1 ? " 等" : ""));
+  PostJson("{\"type\":\"importStart\",\"source\":" + tb::Json::Quote(tb::ToUtf8(paths[0])) + "}");
+
+  std::thread([paths]() {
+    int okCount = 0, badCount = 0;
+    std::string lastId, firstErr;
+    for (const std::wstring& p : paths) {
+      std::string id, error;
+      if (InstallOne(p, id, error)) {
+        okCount++;
+        lastId = id;
+        tb::Log(L"gui", "[import] 已安装 " + id);
+      } else {
+        badCount++;
+        if (firstErr.empty()) firstErr = error;
+        tb::Log(L"gui", "[import] 跳过：" + tb::ToUtf8(p) + "（" + error + "）");
+      }
+    }
+    if (okCount > 0) {
+      RescanTools();
+      PostJson(ToolsJson());
+      PostJson(MarketJson(""));
+    }
+    std::string msg;
+    if (okCount > 0) {
+      msg = "已装 " + std::to_string(okCount) + " 个";
+      if (badCount > 0) msg += "，跳过 " + std::to_string(badCount) + " 个";
+    } else {
+      msg = firstErr.empty() ? "没认出可安装的工具包" : firstErr;
+    }
+    PostImportResult(okCount > 0, lastId, msg);
+    PostJson("{\"type\":\"importEnd\"}");
+  }).detach();
 }
 
 
@@ -921,8 +979,16 @@ public:
     GetClientRect(g.hwnd, &rc);
     controller->put_Bounds(rc);
     controller->put_IsVisible(TRUE);
-    // 注意：不关 AllowExternalDrop。文件拖放走页面里 HTML5 的 drop 事件
-    // （WebView2 的 chrome 子窗口会吃掉 WM_DROPFILES，只在宿主窗口接是收不到的）
+    // 拖放由宿主窗口接管：关掉 WebView2 的对外拖放后，文件拖进来会把 WM_DROPFILES
+    // 发到主窗口，能拿到真实路径——文件夹、一次拖多个、多大的包都行（页面里读 base64
+    // 那套只够小 zip 用，留作兜底）
+    ICoreWebView2Controller4* c4 = nullptr;
+    if (SUCCEEDED(controller->QueryInterface(kIID_ICoreWebView2Controller4,
+                                              reinterpret_cast<void**>(&c4))) &&
+        c4) {
+      c4->put_AllowExternalDrop(FALSE);
+      c4->Release();
+    }
 
     ICoreWebView2Settings* settings = nullptr;
     if (SUCCEEDED(webview->get_Settings(&settings)) && settings) {

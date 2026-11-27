@@ -104,6 +104,44 @@ if (Test-Path $cer) {
 }
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination $distDir -ErrorAction SilentlyContinue
 
+# 3.5 内置运行库：别人机器上没装 VC++ 运行库 / MinGW 运行库时，不至于一开就报「找不到 xxx.dll」
+#  - dist 根：VC++ x64 CRT（gui/update/main 自己要用，exe 同目录优先加载）
+#  - dist\runtime：MinGW 的 libgcc/libstdc++/winpthread（工具子进程沿 PATH 找到，见 util.cpp）
+Write-Host "收集运行库 DLL…" -ForegroundColor Cyan
+$vcCrt = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio\2022" -Recurse -Directory `
+          -Filter "Microsoft.VC14*.CRT" -ErrorAction SilentlyContinue |
+         Where-Object { $_.FullName -match '\\x64\\' } |
+         Sort-Object FullName -Descending | Select-Object -First 1
+if ($vcCrt) {
+  Copy-Item -Path (Join-Path $vcCrt.FullName "*.dll") -Destination $distDir -Force
+  Write-Host "  VC++ CRT: $($vcCrt.FullName)" -ForegroundColor DarkGray
+} else {
+  Write-Host "  没找到 VC++ 可再发行 CRT（装 Visual Studio 的「C++ 桌面开发」才有）" -ForegroundColor Yellow
+}
+
+$rtDir = Join-Path $distDir "runtime"
+New-Item -ItemType Directory -Force $rtDir | Out-Null
+$mingwDirs = @()
+$gcc = Get-Command gcc -ErrorAction SilentlyContinue
+if ($gcc) { $mingwDirs += Split-Path $gcc.Source -Parent }
+foreach ($cand in "C:\Program Files\Git\ucrt64\bin", "C:\msys64\ucrt64\bin", "C:\mingw64\bin") {
+  if (Test-Path $cand) { $mingwDirs += $cand }
+}
+foreach ($d in $mingwDirs) {
+  foreach ($f in "libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll", "libatomic-1.dll") {
+    $p = Join-Path $d $f
+    if ((Test-Path $p) -and -not (Test-Path (Join-Path $rtDir $f))) {
+      Copy-Item -LiteralPath $p -Destination $rtDir -Force
+    }
+  }
+}
+if (-not (Get-ChildItem $rtDir -File -ErrorAction SilentlyContinue)) {
+  Remove-Item -LiteralPath $rtDir -Force -ErrorAction SilentlyContinue
+  Write-Host "  runtime：本机没有 MinGW 运行库，跳过" -ForegroundColor DarkGray
+} else {
+  Write-Host "  runtime: $($rtDir)" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "构建完成 ✔  $distDir" -ForegroundColor Green
 Get-ChildItem -LiteralPath $distDir | Select-Object Name, Length | Format-Table -AutoSize

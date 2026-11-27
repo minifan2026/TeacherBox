@@ -10,7 +10,7 @@
   <header class="bar">
     <div class="logo">T</div>
     <h1>TeacherBox</h1>
-    <span class="ver" id="version">v1.1.8</span>
+    <span class="ver" id="version">v1.1.9</span>
     <div class="acts">
       <button class="btn" id="btn-folder">目录</button>
       <button class="btn" id="btn-import">导入</button>
@@ -32,7 +32,7 @@
       </div>
       <div id="warnings" class="warn hidden"></div>
       <div id="grid" class="grid"></div>
-      <div id="empty" class="empty hidden">还没有工具。到「工具市场」下几个，或者把 zip 拖进窗口。</div>
+      <div id="empty" class="empty hidden">还没有工具。到「工具市场」下几个，或者把 zip 工具包 / 整个工具文件夹拖进窗口。</div>
     </div>
 
     <div id="view-market" class="hidden">
@@ -56,7 +56,10 @@
   </section>
 
   <div id="dropmask" class="dropmask hidden">
-    <div class="dropmask-inner">松手就装</div>
+    <div class="dropmask-inner">
+      <div>松手就装</div>
+      <div class="dropmask-sub">zip 工具包、整个工具文件夹，一次拖几个也行</div>
+    </div>
   </div>
 
   <div id="modal" class="modal hidden">

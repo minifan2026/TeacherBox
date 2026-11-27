@@ -321,3 +321,24 @@ GitHub Pages 是纯静态，`?offset=50` 这种查询串服务端拿不到，所
 - 分页改成滚动加载：`.content` 离底 220px 内自动发 `marketMore`，按 50 条一页追加，拉满 `total` 即停；渲染完 220ms 后如果内容不足一屏会自动续拉一页（「一页不够」的兜底）；「加载更多」按钮保留作兜底。
 
 验证：GitHub Actions `windows-2022` MSVC Release 编译通过（artifact `TeacherBox-Release-win64`）；前端桩桥接（模拟 `chrome.webview` 注入后端消息）Playwright 4/4：滚到底发 `marketMore`、拉到 200/200 后不再请求、刷新同时发 `refresh`+`marketRefresh`、刷新 busy 能退回且显示「已显示 50 / 共 50 个」，短清单（共 60 条）1 秒内自动续拉 1 次。
+
+## 1.1.9 内置运行库 + 超级拖放
+
+**缺 DLL**：三个 exe 用 MSVC 编译，机器上没装 VC++ 运行库时，双击就报「找不到 VCRUNTIME140.dll / MSVCP140.dll」。同理，用 MinGW 编译的工具 exe 缺 `libgcc_s_seh-1.dll` / `libstdc++-6.dll`。
+
+现在构建时自动收集运行库：
+
+- VC++ x64 CRT（`msvcp140*.dll` / `vcruntime140*.dll` / `concrt140.dll` 等）复制到 `dist` 根，和 exe 同目录，加载器优先命中，跟装没装运行库无关；
+- MinGW 运行库（`libgcc_s_seh-1.dll` / `libstdc++-6.dll` / `libwinpthread-1.dll` / `libatomic-1.dll`）放 `dist\runtime`；
+- `util.cpp` 在第一次起子进程前把 `dist\runtime` 和 `dist` 本身前置进 PATH（只改一次），工具 exe 沿 PATH 也能找到这些 DLL。
+
+**超级拖放**：以前只有页面里的 HTML5 drop，拿不到真实路径，只认单个 zip、限 32 MB，拖文件夹直接被拒。
+
+现在主窗口接管拖放——WebView2 关掉 `AllowExternalDrop`（Controller4 接口），拖进来由宿主收 `WM_DROPFILES`，拿到的是真实路径：
+
+- 支持 zip 工具包、整个工具文件夹，一次拖多个；
+- 逐个安装，装完统一重扫工具目录、刷新界面，汇总提示「已装 N 个，跳过 M 个」；
+- 非工具包（压缩包坏、文件夹里没 `tool.json`）单独跳过并给出原因，不再整批失败；
+- 页面里的 HTML5 drop 保留作兜底（个别 WebView2 版本仍交给页面时走 base64 通道），文案改成「zip 工具包、整个工具文件夹，一次拖几个也行」。
+
+验证：本机 MSVC Release 构建通过；`signtool verify` 三个 exe 均 Valid；打包后解压核对 `vcruntime140.dll` / `msvcp140.dll` 在包根、`runtime\` 内有 MinGW 库；`main.exe` FileVersion 1.1.9.0。

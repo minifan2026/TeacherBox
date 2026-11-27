@@ -612,8 +612,10 @@
 
 
   // ------------------------------------------------------------ 拖放
-  // WebView2 的 chrome 子窗口会吃掉 WM_DROPFILES，所以文件拖放开在页面里接，
-  // 读成 base64 交给宿主去解压安装
+  // 主路径：宿主关掉了 WebView2 的 AllowExternalDrop，文件拖进来由主窗口收 WM_DROPFILES，
+  // 能拿到真实路径——文件夹、一次拖多个、多大的包都行（见 gui.cpp）。
+  // 这里保留页面内的 HTML5 drop 作兜底：万一某些 WebView2 版本仍然把事件交给页面，
+  // 就按 base64 传给宿主解压，只够小 zip 用。
   var elDropMask = document.getElementById("dropmask");
   var dragDepth = 0;
 
@@ -637,21 +639,7 @@
     if (dragDepth === 0 && elDropMask) elDropMask.classList.add("hidden");
   });
 
-  window.addEventListener("drop", function (e) {
-    e.preventDefault();
-    dragDepth = 0;
-    if (elDropMask) elDropMask.classList.add("hidden");
-    var files = e.dataTransfer ? e.dataTransfer.files : null;
-    if (!files || !files.length) return;
-    var file = files[0];
-    if (!/\.zip$/i.test(file.name)) {
-      log("只认 .zip 工具包");
-      return;
-    }
-    if (file.size > 32 * 1024 * 1024) {
-      log("包太大了（限 32 MB），先精简一下");
-      return;
-    }
+  function sendOneFile(file) {
     log("读取 " + file.name);
     var reader = new FileReader();
     reader.onload = function () {
@@ -659,8 +647,31 @@
       var comma = result.indexOf(",");
       send({ cmd: "importData", name: file.name, data: comma >= 0 ? result.slice(comma + 1) : "" });
     };
-    reader.onerror = function () { log("读取失败"); };
+    reader.onerror = function () { log("读取失败：" + file.name); };
     reader.readAsDataURL(file);
+  }
+
+  window.addEventListener("drop", function (e) {
+    e.preventDefault();
+    dragDepth = 0;
+    if (elDropMask) elDropMask.classList.add("hidden");
+    var files = e.dataTransfer ? e.dataTransfer.files : null;
+    if (!files || !files.length) return;
+
+    var zips = [];
+    for (var i = 0; i < files.length; i++) {
+      if (/\.zip$/i.test(files[i].name)) {
+        if (files[i].size > 32 * 1024 * 1024) { log("包太大了（兜底通道限 32 MB）：" + files[i].name); continue; }
+        zips.push(files[i]);
+      } else {
+        log("只认 .zip 工具包：" + files[i].name);
+      }
+    }
+    if (!zips.length) {
+      log("拖文件夹请直接拖到窗口上（宿主会收路径）；这里是兜底通道，只认 zip");
+      return;
+    }
+    for (var j = 0; j < zips.length; j++) sendOneFile(zips[j]);
   });
 
   send({ cmd: "ready" });

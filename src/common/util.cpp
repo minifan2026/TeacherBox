@@ -415,8 +415,40 @@ std::string TailLog(const std::wstring& tag, size_t maxBytes) {
 
 // ---------------------------------------------------------------- 进程
 
+// 内置运行库：dist\runtime 里带了 VC++ x64 / MinGW 的 DLL。把它加到本进程 PATH 前面，
+// 之后 CreateProcess 出来的工具子进程都能沿 PATH 找到这些 DLL，
+// 机器上没装 VC++ 运行库也不会再报「找不到 VCRUNTIME140.dll / MSVCP140.dll」。
+// 只在第一次调用时动一次 PATH。
+static void EnsureRuntimeDllPath() {
+  static bool inited = false;
+  if (inited) return;
+  inited = true;
+
+  // exe 目录里放了 VC++ 运行库（gui/update/main 自己要用），runtime 子目录再补 MinGW 那一套
+  std::wstring exeDir = ExeDir();
+  std::wstring rt = JoinPath(exeDir, L"runtime");
+
+  std::wstring cur;
+  DWORD n = GetEnvironmentVariableW(L"PATH", nullptr, 0);
+  if (n > 0) {
+    cur.resize(n);
+    DWORD got = GetEnvironmentVariableW(L"PATH", cur.data(), n);
+    if (got < n) cur.resize(got);
+    while (!cur.empty() && cur.back() == L'\0') cur.pop_back();
+  }
+  if (cur.find(exeDir) != std::wstring::npos &&
+      (!DirExists(rt) || cur.find(rt) != std::wstring::npos))
+    return;
+
+  std::wstring next = exeDir;
+  if (DirExists(rt)) next = rt + L";" + next;
+  if (!cur.empty()) next += L";" + cur;
+  SetEnvironmentVariableW(L"PATH", next.c_str());
+}
+
 RunResult RunCommand(const std::wstring& commandLine, DWORD timeoutMs, const std::wstring& workDir) {
   RunResult result;
+  EnsureRuntimeDllPath();
 
   SECURITY_ATTRIBUTES sa{};
   sa.nLength = sizeof(sa);
@@ -491,6 +523,7 @@ RunResult RunCommand(const std::wstring& commandLine, DWORD timeoutMs, const std
 }
 
 bool LaunchDetached(const std::wstring& commandLine, const std::wstring& workDir) {
+  EnsureRuntimeDllPath();
   STARTUPINFOW si{};
   si.cb = sizeof(si);
   PROCESS_INFORMATION pi{};
